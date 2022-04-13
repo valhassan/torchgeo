@@ -137,6 +137,10 @@ def main(args: argparse.Namespace) -> None:
         root_dir=args.root_dir,
         num_workers=args.num_workers,
         batch_size=args.batch_size,
+        # FIXME: necessary for chesapeake_cvpr
+        # train_splits=["ny-train"],
+        # val_splits=["ny-val"],
+        # test_splits=["ny-test"],
     )
     dm.setup()
 

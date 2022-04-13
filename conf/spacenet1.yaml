@@ -1,40 +1,32 @@
+program:
+  overwrite: True
 trainer:
   gpus: 1
-  min_epochs: 20
-  max_epochs: 100
+  min_epochs: 4
+  max_epochs: 20
   benchmark: True
   auto_lr_find: True
   enable_progress_bar: True
   precision: 16
 
-program:
-  overwrite: True
-
 experiment:
-  task: "chesapeake_cvpr"
-  name: "chesapeake_cvpr_test"
+  task: "spacenet1"
+  name: "spacenet1_test_4-20epochs"
   module:
-    loss: "ce"
+    loss: "jaccard"
     segmentation_model: "unet"
     encoder_name: "resnet18"
     encoder_weights: null
     encoder_output_stride: 16
     learning_rate: 1e-3
     learning_rate_schedule_patience: 6
-    in_channels: 4
-    num_classes: 7
+    in_channels: 3
+    num_classes: 1
     num_filters: 256
-    ignore_zeros: False
+    ignore_zeros: True
     imagenet_pretraining: True
   datamodule:
-    root_dir: "/media/data/Chesapeake"
-    train_splits:
-      - "ny-train"
-    val_splits:
-      - "ny-val"
-    test_splits:
-      - "ny-test"
-    patches_per_tile: 200
+    root_dir: "/media/data/spacenet"
     patch_size: 256
     batch_size: 32
     num_workers: 4

@@ -26,6 +26,7 @@ from torchgeo.datamodules import (
     RESISC45DataModule,
     SEN12MSDataModule,
     So2SatDataModule,
+    Spacenet1DataModule,
     UCMercedDataModule,
 )
 from torchgeo.trainers import (
@@ -35,6 +36,7 @@ from torchgeo.trainers import (
     RegressionTask,
     SemanticSegmentationTask,
 )
+from torchgeo.trainers.segmentation import BinarySemanticSegmentationTask
 
 TASK_TO_MODULES_MAPPING: Dict[
     str, Tuple[Type[pl.LightningModule], Type[pl.LightningDataModule]]
@@ -52,6 +54,7 @@ TASK_TO_MODULES_MAPPING: Dict[
     "resisc45": (ClassificationTask, RESISC45DataModule),
     "sen12ms": (SemanticSegmentationTask, SEN12MSDataModule),
     "so2sat": (ClassificationTask, So2SatDataModule),
+    "spacenet1": (BinarySemanticSegmentationTask, Spacenet1DataModule),
     "ucmerced": (ClassificationTask, UCMercedDataModule),
 }
 
