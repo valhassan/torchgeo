@@ -16,6 +16,7 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from torchgeo.datamodules import (
     BigEarthNetDataModule,
     ChesapeakeCVPRDataModule,
+    CCMEODataModule,
     COWCCountingDataModule,
     CycloneDataModule,
     ETCI2021DataModule,
@@ -43,6 +44,7 @@ TASK_TO_MODULES_MAPPING: Dict[
 ] = {
     "bigearthnet": (MultiLabelClassificationTask, BigEarthNetDataModule),
     "byol": (BYOLTask, ChesapeakeCVPRDataModule),
+    "ccmeo": (BinarySemanticSegmentationTask, CCMEODataModule),
     "chesapeake_cvpr": (SemanticSegmentationTask, ChesapeakeCVPRDataModule),
     "cowc_counting": (RegressionTask, COWCCountingDataModule),
     "cyclone": (RegressionTask, CycloneDataModule),

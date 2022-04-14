@@ -1,0 +1,34 @@
+program:
+  overwrite: True
+trainer:
+  gpus: 1
+  min_epochs: 4
+  max_epochs: 20
+  benchmark: True
+  auto_lr_find: True
+  enable_progress_bar: True
+  precision: 16
+
+experiment:
+  task: "ccmeo"
+  name: "ccmeo_tests"
+  module:
+    loss: "jaccard"
+    segmentation_model: "unet"
+    encoder_name: "resnet18"
+    encoder_weights: null
+    encoder_output_stride: 16
+    learning_rate: 1e-3
+    learning_rate_schedule_patience: 6
+    in_channels: 3
+    num_classes: 1
+    num_filters: 256
+    ignore_zeros: True
+    imagenet_pretraining: True
+  datamodule:
+    root_dir: "/home/remi/PycharmProjects/geo-deep-learning/data/"
+    patch_size: 256
+    batch_size: 32
+    num_workers: 4
+    class_set: ${experiment.module.num_classes}
+    use_prior_labels: False

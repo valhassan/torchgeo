@@ -4,6 +4,7 @@
 """TorchGeo datamodules."""
 
 from .bigearthnet import BigEarthNetDataModule
+from .ccmeo import CCMEODataModule
 from .chesapeake import ChesapeakeCVPRDataModule
 from .cowc import COWCCountingDataModule
 from .cyclone import CycloneDataModule
@@ -30,6 +31,7 @@ __all__ = (
     "NAIPChesapeakeDataModule",
     # VisionDataset
     "BigEarthNetDataModule",
+    "CCMEODataModule",
     "COWCCountingDataModule",
     "ETCI2021DataModule",
     "EuroSATDataModule",

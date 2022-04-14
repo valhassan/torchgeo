@@ -10,11 +10,13 @@ import pytorch_lightning as pl
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-from ..datasets import SpaceNet1
+from ..datasets.ccmeo import DigitalGlobe, InferenceDataset
 
 # https://github.com/pytorch/pytorch/issues/60979
 # https://github.com/pytorch/pytorch/pull/61045
 DataLoader.__module__ = "torch.utils.data"
+
+from ..samplers.single import GridGeoSamplerPlus
 
 
 class CCMEODataModule(pl.LightningDataModule):
@@ -31,10 +33,10 @@ class CCMEODataModule(pl.LightningDataModule):
         patch_size: int = 256,
         **kwargs: Any
     ) -> None:
-        """Initialize a LightningDataModule for Spacenet based DataLoaders.
+        """Initialize a LightningDataModule for CCMEO based DataLoaders.
 
         Args:
-            root_dir: The ``root`` argument to pass to the Spacenet Dataset classes
+            root_dir: The ``root`` argument to pass to the CCMEO Dataset classes
             batch_size: The batch size to use in all created DataLoaders
             num_workers: The number of workers to use in all created DataLoaders
             patch_size: The size of each patch in pixels (test patches will be 1.5 times
@@ -129,6 +131,7 @@ class CCMEODataModule(pl.LightningDataModule):
 
         return pad_inner
 
+    # TODO change to random crop
     def center_crop(
         self, size: int = 512
     ) -> Callable[[Dict[str, Tensor]], Dict[str, Tensor]]:
@@ -174,7 +177,7 @@ class CCMEODataModule(pl.LightningDataModule):
 
         This method is only called once per run.
         """
-        SpaceNet1(self.root_dir, download=False, checksum=False)
+        DigitalGlobe(self.root_dir, download=False, checksum=False)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Initialize the main ``Dataset`` objects.
@@ -203,15 +206,16 @@ class CCMEODataModule(pl.LightningDataModule):
             ]
         )
 
-        self.train_dataset = SpaceNet1(
+        # TODO: define splits Here
+        self.train_dataset = DigitalGlobe(
             self.root_dir, transforms=train_transforms
         )
 
-        self.val_dataset = SpaceNet1(
+        self.val_dataset = DigitalGlobe(
             self.root_dir, transforms=val_transforms
         )
 
-        self.test_dataset = SpaceNet1(
+        self.test_dataset = DigitalGlobe(
             self.root_dir, transforms=test_transforms
         )
 
@@ -255,7 +259,7 @@ class CCMEODataModule(pl.LightningDataModule):
         )
 
     def plot(self, *args: Any, **kwargs: Any) -> plt.Figure:
-        """Run :meth:`torchgeo.datasets.>Spacenet1.plot`.
+        """Run :meth:`torchgeo.datasets.>CCMEODataset.plot`.
 
         .. versionadded:: 0.2
         """
@@ -275,10 +279,6 @@ from torch.utils.data import DataLoader
 from torchgeo.datasets import stack_samples
 from torchgeo.samplers import Units, GridGeoSampler
 from torchvision.transforms import Compose
-
-from inference.GridGeoSamplerPlus import GridGeoSamplerPlus
-from inference.InferenceDataset import InferenceDataset
-
 
 # adapted from: https://github.com/microsoft/torchgeo/blob/3f7e525fbd01dddd25804e7a1b7634269ead1760/torchgeo/datamodules/chesapeake.py#L100
 def pad(

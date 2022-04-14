@@ -4,9 +4,7 @@
 """CCMEO datasets."""
 
 import abc
-import glob
 import os
-from multiprocessing import get_logger
 from pathlib import Path
 from typing import Union, Optional, Sequence, Callable, Dict, Any, cast, List, Tuple
 
@@ -40,7 +38,7 @@ from .utils import (
     percentile_normalization,
 )
 
-logging = get_logger(__name__)
+#logging = get_logger(__name__)  # TODO
 
 
 class SingleBandItemEO(ItemEOExtension):
@@ -94,20 +92,16 @@ class CCMEO(VisionDataset, abc.ABC):
     def imagery(self) -> Dict[str, str]:
         """Mapping of image identifier and filename."""
 
-    @property
-    @abc.abstractmethod
-    def label_glob(self) -> str:
-        """Label filename."""
+    # TODO
+    # @property
+    # @abc.abstractmethod
+    # def label_glob(self) -> str:
+    #     """Label filename."""
 
-    @property
-    @abc.abstractmethod
-    def collection_md5_dict(self) -> Dict[str, str]:
-        """Mapping of collection id and md5 checksum."""
-
-    @property
-    @abc.abstractmethod
-    def chip_size(self) -> Dict[str, Tuple[int, int]]:
-        """Mapping of images and their chip size."""
+    # @property
+    # @abc.abstractmethod
+    # def collection_md5_dict(self) -> Dict[str, str]:
+    #     """Mapping of collection id and md5 checksum."""
 
     def __init__(
         self,
@@ -135,26 +129,28 @@ class CCMEO(VisionDataset, abc.ABC):
         self.root = root
         self.image = image  # For testing
 
-        if collections:
-            for collection in collections:
-                assert collection in self.collection_md5_dict
+        # TODO
+        # if collections:
+        #     for collection in collections:
+        #         assert collection in self.collection_md5_dict
 
-        self.collections = collections or list(self.collection_md5_dict.keys())
-        self.filename = self.imagery[image]
+        self.collections = collections #or list(self.collection_md5_dict.keys())
+        # self.filename = self.imagery[image]  # TODO
         self.transforms = transforms
         self.checksum = checksum
 
-        to_be_downloaded = self._check_integrity()
+        # TODO
+        #to_be_downloaded = self._check_integrity()
 
-        if to_be_downloaded:
-            if not download:
-                raise RuntimeError(
-                    f"Dataset not found in `root={self.root}` and `download=False`, "
-                    "either specify a different `root` directory or use "
-                    "`download=True` to automaticaly download the dataset."
-                )
-            else:
-                self._download(to_be_downloaded, api_key)
+        # if to_be_downloaded:
+        #     if not download:
+        #         raise RuntimeError(
+        #             f"Dataset not found in `root={self.root}` and `download=False`, "
+        #             "either specify a different `root` directory or use "
+        #             "`download=True` to automaticaly download the dataset."
+        #         )
+        #     else:
+        #         self._download(to_be_downloaded)
 
         self.files = self._load_files(root)
 
@@ -169,12 +165,10 @@ class CCMEO(VisionDataset, abc.ABC):
         """
         files = []
         for collection in self.collections:
-            images = glob.glob(os.path.join(root, collection, "*", self.filename))
+            images = (Path(root) / collection).glob("**/images/*.tif")
             images = sorted(images)
             for imgpath in images:
-                lbl_path = os.path.join(
-                    os.path.dirname(imgpath) + "-labels", self.label_glob
-                )
+                lbl_path = list((imgpath.parent.parent/"labels_burned").glob(f"*{imgpath.name[-16:]}"))[0]
                 files.append({"image_path": imgpath, "label_path": lbl_path})
         return files
 
@@ -258,11 +252,13 @@ class CCMEO(VisionDataset, abc.ABC):
         """
         files = self.files[index]
         img, tfm, raster_crs = self._load_image(files["image_path"])
-        h, w = img.shape[1:]
-        mask = self._load_mask(files["label_path"], tfm, raster_crs, (h, w))
+        # h, w = img.shape[1:]
+        mask, *_ = self._load_image(files["label_path"])
+        #mask = self._load_mask(files["label_path"], tfm, raster_crs, (h, w))
 
-        ch, cw = self.chip_size[self.image]
-        sample = {"image": img[:, :ch, :cw], "mask": mask[:ch, :cw]}
+        if not img.shape == mask.shape:
+            raise ValueError(f"Mismatch between image chip shape ({img.shape}) and mask chip shape ({mask.shape})")
+        sample = {"image": img, "mask": mask}
 
         if self.transforms is not None:
             sample = self.transforms(sample)
@@ -433,11 +429,11 @@ class DigitalGlobe(CCMEO):
 
     """
 
-    dataset_id = "spacenet1"
-    imagery = {"rgb": "RGB.tif", "8band": "8Band.tif"}
-    chip_size = {"rgb": (406, 438), "8band": (101, 110)}
-    label_glob = "labels.geojson"
-    collection_md5_dict = {"sn1_AOI_1_RIO": "e6ea35331636fa0c036c04b3d1cbf226"}
+    dataset_id = "ccmeo-digitalglobe"  # TODO
+    imagery = {"rgb": "*.tif", "rgbn": "*RGBN.tif"}  # TODO
+    chip_size = {"rgb": (512, 512), "8band": (101, 110)}
+    # label_glob = "labels.geojson"
+    #collection_md5_dict = {"sn1_AOI_1_RIO": "e6ea35331636fa0c036c04b3d1cbf226"}  # TODO
 
     def __init__(
         self,
@@ -445,28 +441,27 @@ class DigitalGlobe(CCMEO):
         image: str = "rgb",
         transforms: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
         download: bool = False,
-        api_key: Optional[str] = None,
         checksum: bool = False,
     ) -> None:
-        """Initialize a new SpaceNet 1 Dataset instance.
+        """Initialize a new CCMEO Dataset instance.
 
         Args:
             root: root directory where dataset can be found
-            image: image selection which must be "rgb" or "8band"
+            image: image selection which must be "rgb" or "rgbn"
             transforms: a function/transform that takes input sample and its target as
                 entry and returns a transformed version.
             download: if True, download dataset and store it in the root directory.
-            api_key: a RadiantEarth MLHub API key to use for downloading the dataset
             checksum: if True, check the MD5 of the downloaded files (may be slow)
 
         Raises:
             RuntimeError: if ``download=False`` but dataset is missing
         """
-        collections = ["sn1_AOI_1_RIO"]
+        collections = ["gdl_buildings_lxastro"]
         assert image in {"rgb", "8band"}
         super().__init__(
-            root, image, collections, transforms, download, api_key, checksum
+            root, image, collections, transforms, download, checksum
         )
+
 
 class InferenceDataset(RasterDataset):
     def __init__(
