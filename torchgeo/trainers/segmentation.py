@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from pytorch_lightning.core.lightning import LightningModule
 from torch import Tensor
-from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau  #, OneCycleLR
 from torch.utils.data import DataLoader
 from torchmetrics import Accuracy, JaccardIndex, MetricCollection
 
@@ -431,10 +431,10 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
-                # "scheduler": ReduceLROnPlateau(
-                #     optimizer, patience=self.hparams["learning_rate_schedule_patience"]
-                "scheduler": OneCycleLR(
-                    optimizer, max_lr=1e-3, total_steps=len(self.trainer.datamodule.train_dataloader()),
+                "scheduler": ReduceLROnPlateau(
+                    optimizer, patience=self.hparams["learning_rate_schedule_patience"]
+                #"scheduler": OneCycleLR(
+                #    optimizer, max_lr=1e-3, total_steps=len(self.trainer.datamodule.train_dataloader()),
                 ),
                 "monitor": "val_loss",
             },

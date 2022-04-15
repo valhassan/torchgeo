@@ -103,6 +103,8 @@ class CCMEO(VisionDataset, abc.ABC):
     # def collection_md5_dict(self) -> Dict[str, str]:
     #     """Mapping of collection id and md5 checksum."""
 
+    splits = ["trn", "val", "test"]
+
     def __init__(
         self,
         root: str,
@@ -154,7 +156,7 @@ class CCMEO(VisionDataset, abc.ABC):
 
         self.files = self._load_files(root)
 
-    def _load_files(self, root: str) -> List[Dict[str, str]]:
+    def _load_files(self, root: str) -> List[Dict[str, Path]]:
         """Return the paths of the files in the dataset.
 
         Args:
@@ -165,11 +167,12 @@ class CCMEO(VisionDataset, abc.ABC):
         """
         files = []
         for collection in self.collections:
-            images = (Path(root) / collection).glob("**/images/*.tif")
-            images = sorted(images)
-            for imgpath in images:
-                lbl_path = list((imgpath.parent.parent/"labels_burned").glob(f"*{imgpath.name[-16:]}"))[0]
-                files.append({"image_path": imgpath, "label_path": lbl_path})
+            for split in self.splits:
+                images = (Path(root) / collection).glob(f"**/{split}/*/images/*.tif")
+                images = sorted(images)
+                for imgpath in images:
+                    lbl_path = list((imgpath.parent.parent/"labels_burned").glob(f"*{imgpath.name[-16:]}"))[0]
+                    files.append({"image_path": imgpath, "label_path": lbl_path})
         return files
 
     def _load_image(self, path: str) -> Tuple[Tensor, Affine, CRS]:
@@ -438,6 +441,7 @@ class DigitalGlobe(CCMEO):
     def __init__(
         self,
         root: str,
+        splits: Sequence[str] = ["trn"],
         image: str = "rgb",
         transforms: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
         download: bool = False,

@@ -10,6 +10,7 @@ dependencies:
   - pip
   - pycocotools
   - pyproj>=2.2
+  - pystac
   - python>=3.6
   - pytorch>=1.7
   - rarfile>=3

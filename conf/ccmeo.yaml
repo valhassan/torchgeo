@@ -1,7 +1,7 @@
 program:
   overwrite: True
 trainer:
-  gpus: 1
+  gpus: 0
   min_epochs: 4
   max_epochs: 20
   benchmark: True
@@ -27,6 +27,12 @@ experiment:
     imagenet_pretraining: True
   datamodule:
     root_dir: "/home/remi/PycharmProjects/geo-deep-learning/data/"
+    train_splits:
+      - "trn"
+    val_splits:
+      - "val"
+    test_splits:
+      - "test"
     patch_size: 256
     batch_size: 32
     num_workers: 4

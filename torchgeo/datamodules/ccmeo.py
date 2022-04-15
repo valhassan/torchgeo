@@ -2,7 +2,7 @@
 
 """CCMEO datamodule."""
 
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, Optional, Callable, List
 
 import kornia.augmentation as K
 import matplotlib.pyplot as plt
@@ -20,7 +20,7 @@ from ..samplers.single import GridGeoSamplerPlus
 
 
 class CCMEODataModule(pl.LightningDataModule):
-    """LightningDataModule implementation for the LandCover.ai dataset.
+    """LightningDataModule implementation for the CCMEO dataset.
 
     Uses the train/val/test splits from the dataset.
     """
@@ -28,15 +28,22 @@ class CCMEODataModule(pl.LightningDataModule):
     def __init__(
         self,
         root_dir: str,
+        train_splits: List[str],
+        val_splits: List[str],
+        test_splits: List[str],
         batch_size: int = 64,
         num_workers: int = 0,
         patch_size: int = 256,
+
         **kwargs: Any
     ) -> None:
         """Initialize a LightningDataModule for CCMEO based DataLoaders.
 
         Args:
             root_dir: The ``root`` argument to pass to the CCMEO Dataset classes
+            train_splits: The splits used to train the model, e.g. ["trn"]
+            val_splits: The splits used to validate the model, e.g. ["val"]
+            test_splits: The splits used to test the model, e.g. ["test"]
             batch_size: The batch size to use in all created DataLoaders
             num_workers: The number of workers to use in all created DataLoaders
             patch_size: The size of each patch in pixels (test patches will be 1.5 times
@@ -45,6 +52,9 @@ class CCMEODataModule(pl.LightningDataModule):
         """
         super().__init__()  # type: ignore[no-untyped-call]
         self.root_dir = root_dir
+        self.train_splits = train_splits
+        self.val_splits = val_splits
+        self.test_splits = test_splits
         self.batch_size = batch_size
         self.num_workers = num_workers
 
@@ -189,6 +199,7 @@ class CCMEODataModule(pl.LightningDataModule):
         """
         train_transforms = Compose(
             [
+                #K.RandomCrop(self.patch_size),
                 self.center_crop(self.patch_size),
                 self.preprocess,
             ]
@@ -206,17 +217,22 @@ class CCMEODataModule(pl.LightningDataModule):
             ]
         )
 
-        # TODO: define splits Here
         self.train_dataset = DigitalGlobe(
-            self.root_dir, transforms=train_transforms
+            self.root_dir,
+            splits=self.train_splits,
+            transforms=train_transforms
         )
 
         self.val_dataset = DigitalGlobe(
-            self.root_dir, transforms=val_transforms
+            self.root_dir,
+            splits=self.val_splits,
+            transforms=val_transforms
         )
 
         self.test_dataset = DigitalGlobe(
-            self.root_dir, transforms=test_transforms
+            self.root_dir,
+            splits=self.test_splits,
+            transforms=test_transforms
         )
 
     def train_dataloader(self) -> DataLoader[Any]:
