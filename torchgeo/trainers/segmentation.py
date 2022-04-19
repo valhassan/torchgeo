@@ -456,7 +456,8 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
                 # "scheduler": ReduceLROnPlateau(
                 #     optimizer, patience=self.hparams["learning_rate_schedule_patience"]
                 "scheduler": OneCycleLR(
-                   optimizer, max_lr=1e-3, total_steps=len(self.trainer.datamodule.train_dataloader()),
+                    optimizer, max_lr=1e-3, steps_per_epoch=len(self.trainer.datamodule.train_dataloader()),
+                    epochs=self.trainer.max_epochs,
                 ),
                 "monitor": "val_loss",
             },
