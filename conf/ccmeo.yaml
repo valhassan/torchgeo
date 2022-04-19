@@ -1,5 +1,6 @@
 program:
   overwrite: True
+  log_dir: ./logs
 trainer:
   gpus: 1
   min_epochs: 4
@@ -8,6 +9,7 @@ trainer:
   #auto_lr_find: True
   enable_progress_bar: True
   precision: 16
+  #auto_scale_batch_size: binsearch
 
 experiment:
   task: "ccmeo"

@@ -12,6 +12,7 @@ import pytorch_lightning as pl
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.loggers import MLFlowLogger
 
 from torchgeo.datamodules import (
     BigEarthNetDataModule,
@@ -169,7 +170,8 @@ def main(conf: DictConfig) -> None:
     ######################################
     # Setup trainer
     ######################################
-    tb_logger = pl_loggers.TensorBoardLogger(conf.program.log_dir, name=experiment_name)
+    #tb_logger = pl_loggers.TensorBoardLogger(conf.program.log_dir, name=experiment_name)
+    mlf_logger = MLFlowLogger(experiment_name=experiment_name, tracking_uri=conf.program.log_dir)
 
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss", dirpath=experiment_dir, save_top_k=1, save_last=True
@@ -181,11 +183,11 @@ def main(conf: DictConfig) -> None:
     trainer_args = cast(Dict[str, Any], OmegaConf.to_object(conf.trainer))
 
     trainer_args["callbacks"] = [checkpoint_callback, early_stopping_callback]
-    trainer_args["logger"] = tb_logger
+    trainer_args["logger"] = mlf_logger
     trainer_args["default_root_dir"] = experiment_dir
     trainer = pl.Trainer(**trainer_args)
 
-    if trainer_args.get("auto_lr_find"):
+    if trainer_args.get("auto_lr_find") or trainer_args.get("auto_scale_batch_size"):
         trainer.tune(model=task, datamodule=datamodule)
 
     ######################################
