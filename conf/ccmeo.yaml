@@ -1,11 +1,11 @@
 program:
   overwrite: True
 trainer:
-  gpus: 0
+  gpus: 1
   min_epochs: 4
   max_epochs: 20
   benchmark: True
-  auto_lr_find: True
+  #auto_lr_find: True
   enable_progress_bar: True
   precision: 16
 
@@ -33,8 +33,8 @@ experiment:
       - "val"
     test_splits:
       - "test"
-    patch_size: 256
-    batch_size: 32
+    patch_size: 512
+    batch_size: 12
     num_workers: 4
     class_set: ${experiment.module.num_classes}
     use_prior_labels: False

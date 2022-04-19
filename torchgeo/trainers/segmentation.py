@@ -9,8 +9,9 @@ import segmentation_models_pytorch as smp
 import torch
 import torch.nn as nn
 from pytorch_lightning.core.lightning import LightningModule
+from segmentation_models_pytorch import MAnet, UnetPlusPlus
 from torch import Tensor
-from torch.optim.lr_scheduler import ReduceLROnPlateau  #, OneCycleLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR  # , OneCycleLR
 from torch.utils.data import DataLoader
 from torchmetrics import Accuracy, JaccardIndex, MetricCollection
 
@@ -20,6 +21,10 @@ from ..models import FCN
 # https://github.com/pytorch/pytorch/issues/60979
 # https://github.com/pytorch/pytorch/pull/61045
 DataLoader.__module__ = "torch.utils.data"
+
+from ..utils import get_logger
+
+logging = get_logger(__name__)
 
 
 class SemanticSegmentationTask(LightningModule):
@@ -274,6 +279,21 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
                 classes=self.hparams["num_classes"],
                 num_filters=self.hparams["num_filters"],
             )
+        elif self.hparams["segmentation_model"] == "manet":
+            self.model = MAnet(
+                in_channels=self.hparams["in_channels"],
+                classes=self.hparams["num_classes"],
+                encoder_weights=self.hparams["encoder_weights"],
+            )
+        elif self.hparams["segmentation_model"] == "unet++":
+            self.model = UnetPlusPlus(
+                in_channels=self.hparams["in_channels"],
+                classes=self.hparams["num_classes"],
+                encoder_weights=self.hparams["encoder_weights"],
+                encoder_depth=4,
+                decoder_channels=[256, 128, 64, 32],
+                decoder_attention_type="scse",
+            )
         else:
             raise ValueError(
                 f"Model type '{self.hparams['segmentation_model']}' is not valid."
@@ -349,6 +369,8 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
         """
         x = batch["image"]
         y = batch["mask"]
+        logging.debug(x.shape)
+        logging.debug(y.shape)
         y_hat = self.forward(x)
         y_hat_hard = torch.sigmoid(y_hat).squeeze(dim=1)
 
@@ -431,10 +453,10 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
-                "scheduler": ReduceLROnPlateau(
-                    optimizer, patience=self.hparams["learning_rate_schedule_patience"]
-                #"scheduler": OneCycleLR(
-                #    optimizer, max_lr=1e-3, total_steps=len(self.trainer.datamodule.train_dataloader()),
+                # "scheduler": ReduceLROnPlateau(
+                #     optimizer, patience=self.hparams["learning_rate_schedule_patience"]
+                "scheduler": OneCycleLR(
+                   optimizer, max_lr=1e-3, total_steps=len(self.trainer.datamodule.train_dataloader()),
                 ),
                 "monitor": "val_loss",
             },

@@ -2,13 +2,23 @@
 
 """CCMEO datamodule."""
 
-from typing import Any, Dict, Optional, Callable, List
+from pathlib import Path
+from typing import Union, Sequence, Any, Callable, Dict, Optional, List
+
+import numpy as np
+import torch
+from pytorch_lightning import LightningDataModule
+from skimage import exposure
+from torch import Tensor
+from torch.nn import functional as F
+from torch.utils.data import DataLoader
+from torchgeo.datasets import stack_samples
+from torchgeo.samplers import Units, GridGeoSampler
+from torchvision.transforms import Compose
 
 import kornia.augmentation as K
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
-from torch import Tensor
-from torch.utils.data import DataLoader
 
 from ..datasets.ccmeo import DigitalGlobe, InferenceDataset
 
@@ -85,6 +95,7 @@ class CCMEODataModule(pl.LightningDataModule):
             y = batch["mask"].float().unsqueeze(1)
 
             train_augmentations = K.AugmentationSequential(
+                K.RandomCrop((self.patch_size, self.patch_size)),
                 K.RandomRotation(p=0.5, degrees=90),
                 K.RandomHorizontalFlip(p=0.5),
                 K.RandomVerticalFlip(p=0.5),
@@ -141,7 +152,6 @@ class CCMEODataModule(pl.LightningDataModule):
 
         return pad_inner
 
-    # TODO change to random crop
     def center_crop(
         self, size: int = 512
     ) -> Callable[[Dict[str, Tensor]], Dict[str, Tensor]]:
@@ -199,20 +209,16 @@ class CCMEODataModule(pl.LightningDataModule):
         """
         train_transforms = Compose(
             [
-                #K.RandomCrop(self.patch_size),
-                self.center_crop(self.patch_size),
                 self.preprocess,
             ]
         )
         val_transforms = Compose(
             [
-                self.center_crop(self.patch_size),
                 self.preprocess,
             ]
         )
         test_transforms = Compose(
             [
-                self.pad_to(self.original_patch_size, image_value=0, mask_value=0),
                 self.preprocess,
             ]
         )
@@ -256,7 +262,7 @@ class CCMEODataModule(pl.LightningDataModule):
         """
         return DataLoader(
             self.val_dataset,
-            batch_size=self.batch_size,
+            batch_size=self.batch_size//4,  # TODO: softcode
             num_workers=self.num_workers,
             shuffle=False,
         )
@@ -269,32 +275,18 @@ class CCMEODataModule(pl.LightningDataModule):
         """
         return DataLoader(
             self.test_dataset,
-            batch_size=self.batch_size,
+            batch_size=self.batch_size//4,
             num_workers=self.num_workers,
             shuffle=False,
         )
 
-    def plot(self, *args: Any, **kwargs: Any) -> plt.Figure:
-        """Run :meth:`torchgeo.datasets.>CCMEODataset.plot`.
+    # def plot(self, *args: Any, **kwargs: Any) -> plt.Figure:
+    #     """Run :meth:`torchgeo.datasets.>CCMEODataset.plot`.
+    #
+    #     .. versionadded:: 0.2
+    #     """
+    #     return self.val_dataset.plot(*args, **kwargs)
 
-        .. versionadded:: 0.2
-        """
-        return self.val_dataset.plot(*args, **kwargs)
-
-
-from pathlib import Path
-from typing import Union, Sequence, Any, Callable, Dict, Optional
-
-import numpy as np
-import torch
-from pytorch_lightning import LightningDataModule
-from skimage import exposure
-from torch import Tensor
-from torch.nn import functional as F
-from torch.utils.data import DataLoader
-from torchgeo.datasets import stack_samples
-from torchgeo.samplers import Units, GridGeoSampler
-from torchvision.transforms import Compose
 
 # adapted from: https://github.com/microsoft/torchgeo/blob/3f7e525fbd01dddd25804e7a1b7634269ead1760/torchgeo/datamodules/chesapeake.py#L100
 def pad(

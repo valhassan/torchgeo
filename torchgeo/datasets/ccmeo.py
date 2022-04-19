@@ -37,8 +37,9 @@ from .utils import (
     extract_archive,
     percentile_normalization,
 )
+from ..utils import get_logger
 
-#logging = get_logger(__name__)  # TODO
+logging = get_logger(__name__)
 
 
 class SingleBandItemEO(ItemEOExtension):
@@ -103,8 +104,6 @@ class CCMEO(VisionDataset, abc.ABC):
     # def collection_md5_dict(self) -> Dict[str, str]:
     #     """Mapping of collection id and md5 checksum."""
 
-    splits = ["trn", "val", "test"]
-
     def __init__(
         self,
         root: str,
@@ -113,6 +112,7 @@ class CCMEO(VisionDataset, abc.ABC):
         transforms: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
         download: bool = False,
         checksum: bool = False,
+        splits=["trn"]
     ) -> None:
         """Initialize a new CCMEO Dataset instance.
 
@@ -130,6 +130,7 @@ class CCMEO(VisionDataset, abc.ABC):
         """
         self.root = root
         self.image = image  # For testing
+        self.splits = splits
 
         # TODO
         # if collections:
@@ -171,7 +172,7 @@ class CCMEO(VisionDataset, abc.ABC):
                 images = (Path(root) / collection).glob(f"**/{split}/*/images/*.tif")
                 images = sorted(images)
                 for imgpath in images:
-                    lbl_path = list((imgpath.parent.parent/"labels_burned").glob(f"*{imgpath.name[-16:]}"))[0]
+                    lbl_path = list((imgpath.parent.parent/"labels_burned").glob(f"*{imgpath.name[-16:]}"))[0]  # FIXME: add robustness
                     files.append({"image_path": imgpath, "label_path": lbl_path})
         return files
 
@@ -257,9 +258,11 @@ class CCMEO(VisionDataset, abc.ABC):
         img, tfm, raster_crs = self._load_image(files["image_path"])
         # h, w = img.shape[1:]
         mask, *_ = self._load_image(files["label_path"])
+        mask[mask == 255] = 0  # TODO: make ignore_index work
+        mask = mask.squeeze()
         #mask = self._load_mask(files["label_path"], tfm, raster_crs, (h, w))
 
-        if not img.shape == mask.shape:
+        if not img.shape[-2:] == mask.shape[-2:]:
             raise ValueError(f"Mismatch between image chip shape ({img.shape}) and mask chip shape ({mask.shape})")
         sample = {"image": img, "mask": mask}
 
@@ -463,7 +466,7 @@ class DigitalGlobe(CCMEO):
         collections = ["gdl_buildings_lxastro"]
         assert image in {"rgb", "8band"}
         super().__init__(
-            root, image, collections, transforms, download, checksum
+            root, image, collections, transforms, download, checksum, splits
         )
 
 
