@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Union, Optional, Sequence, Callable, Dict, Any, cast, List, Tuple
 
 import fiona
+import pandas
 from hydra.utils import to_absolute_path
 import matplotlib.pyplot as plt
 import numpy as np
@@ -166,17 +167,28 @@ class CCMEO(VisionDataset, abc.ABC):
         Returns:
             list of dicts containing paths for each pair of image and label
         """
+        # TODO: glob or list?
         files = []
-        for collection in self.collections:
-            for split in self.splits:
-                images = (Path(root) / collection).glob(f"**/{split}/*/images/*.tif")
-                images = sorted(images)
-                for imgpath in images:
-                    lbl_path = list((imgpath.parent.parent/"labels_burned").glob(f"*{imgpath.name[-16:]}"))[0]  # FIXME: add robustness
-                    files.append({"image_path": imgpath, "label_path": lbl_path})
+        # for collection in self.collections:
+        for split in self.splits:
+            rows = pandas.read_csv(split, sep=';', header=None)
+            for row in rows.values:
+                imgpath, lbl_path = row[:2]
+                imgpath, lbl_path = Path(imgpath), Path(lbl_path)
+                if not imgpath.is_file():
+                    raise FileNotFoundError(imgpath)
+                if not lbl_path.is_file():
+                    raise FileNotFoundError(lbl_path)
+                files.append({"image_path": imgpath, "label_path": lbl_path})
+
+                # images = (Path(root) / collection).glob(f"**/{split}/*/images/*.tif")
+                # images = sorted(images)
+                # for imgpath in images:
+                #     lbl_path = list((imgpath.parent.parent/"labels_burned").glob(f"*{imgpath.name[-16:]}"))[0]  # FIXME: add robustness
+                #     files.append({"image_path": imgpath, "label_path": lbl_path})
         return files
 
-    def _load_image(self, path: str) -> Tuple[Tensor, Affine, CRS]:
+    def _load_image(self, path: Union[str, Path]) -> Tuple[Tensor, Affine, CRS]:
         """Load a single image.
 
         Args:
@@ -185,8 +197,7 @@ class CCMEO(VisionDataset, abc.ABC):
         Returns:
             the image
         """
-        filename = os.path.join(path)
-        with rio.open(filename) as img:
+        with rio.open(path) as img:
             array = img.read().astype(np.int32)
             tensor: Tensor = torch.from_numpy(array)  # type: ignore[attr-defined]
             return tensor, img.transform, img.crs
@@ -463,7 +474,7 @@ class DigitalGlobe(CCMEO):
         Raises:
             RuntimeError: if ``download=False`` but dataset is missing
         """
-        collections = ["gdl_buildings_lxastro"]
+        collections = ["gdl_buildings_lxastro"]  # TODO reimplement?
         assert image in {"rgb", "8band"}
         super().__init__(
             root, image, collections, transforms, download, checksum, splits

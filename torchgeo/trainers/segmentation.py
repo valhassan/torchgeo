@@ -309,7 +309,15 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
             )
         elif self.hparams["loss"] == "focal":
             self.loss = smp.losses.FocalLoss(
-                "binary", ignore_index=self.ignore_zeros, normalized=True
+                mode="binary", ignore_index=self.ignore_zeros, normalized=True
+            )
+        elif self.hparams["loss"] == "lovasz":
+            self.loss = smp.losses.LovaszLoss(
+                mode="binary", ignore_index=self.ignore_zeros, per_image=True
+            )
+        elif self.hparams["loss"] == "softbce":
+            self.loss = smp.losses.SoftBCEWithLogitsLoss(
+                ignore_index=self.ignore_zeros
             )
         else:
             raise ValueError(f"Loss type '{self.hparams['loss']}' is not valid.")
@@ -358,7 +366,7 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
     def training_step(  # type: ignore[override]
         self, batch: Dict[str, Any], batch_idx: int
     ) -> Tensor:
-        """Training step - reports average accuracy and average JaccardIndex.
+        """Training step - reports average JaccardIndex.
 
         Args:
             batch: Current batch
@@ -369,27 +377,25 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
         """
         x = batch["image"]
         y = batch["mask"]
-        logging.debug(x.shape)
-        logging.debug(y.shape)
-        y_hat = self.forward(x)
-        y_hat_hard = torch.sigmoid(y_hat).squeeze(dim=1)
+        y_hat = self.forward(x).squeeze(dim=1)
+        y_hat_sigmoid = torch.sigmoid(y_hat)
 
-        loss = self.loss(y_hat, y)
+        loss = self.loss(y_hat, y.float())
 
         # by default, the train step logs every `log_every_n_steps` steps where
         # `log_every_n_steps` is a parameter to the `Trainer` object
         self.log("train_loss", loss, on_step=True, on_epoch=False)
-        self.train_metrics(y_hat_hard, y)
+        self.train_metrics(y_hat_sigmoid, y)
 
         return cast(Tensor, loss)
 
     def validation_step(  # type: ignore[override]
         self, batch: Dict[str, Any], batch_idx: int
     ) -> None:
-        """Validation step - reports average accuracy and average JaccardIndex.
+        """Validation step - reports average JaccardIndex.
 
         Logs the first 10 validation samples to tensorboard as images with 3 subplots
-        showing the image, mask, and predictions.
+        showing the image, mask, and predictions. TODO
 
         Args:
             batch: Current batch
@@ -397,18 +403,18 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
         """
         x = batch["image"]
         y = batch["mask"]
-        y_hat = self.forward(x)
-        y_hat_hard = torch.sigmoid(y_hat).squeeze(dim=1)
+        y_hat = self.forward(x).squeeze(dim=1)
+        y_hat_sigmoid = torch.sigmoid(y_hat)
 
-        loss = self.loss(y_hat, y)
+        loss = self.loss(y_hat, y.float())
 
         self.log("val_loss", loss, on_step=False, on_epoch=True)
-        self.val_metrics(y_hat_hard, y)
+        self.val_metrics(y_hat_sigmoid, y)
 
         if batch_idx < 10:
             try:
                 datamodule = self.trainer.datamodule  # type: ignore[attr-defined]
-                batch["prediction"] = y_hat_hard
+                batch["prediction"] = y_hat_sigmoid
                 for key in ["image", "mask", "prediction"]:
                     batch[key] = batch[key].cpu()
                 sample = unbind_samples(batch)[0]
@@ -431,14 +437,14 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
         """
         x = batch["image"]
         y = batch["mask"]
-        y_hat = self.forward(x)
-        y_hat_hard = torch.sigmoid(y_hat).squeeze(dim=1)
+        y_hat = self.forward(x).squeeze(dim=1)
+        y_hat_sigmoid = torch.sigmoid(y_hat)
 
-        loss = self.loss(y_hat, y)
+        loss = self.loss(y_hat, y.float())
 
         # by default, the test and validation steps only log per *epoch*
         self.log("test_loss", loss, on_step=False, on_epoch=True)
-        self.test_metrics(y_hat_hard, y)
+        self.test_metrics(y_hat_sigmoid, y)
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Initialize the optimizer and learning rate scheduler.
@@ -447,8 +453,8 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
             a "lr dict" according to the pytorch lightning documentation --
             https://pytorch-lightning.readthedocs.io/en/latest/common/lightning_module.html#configure-optimizers
         """
-        optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.hparams["learning_rate"]
+        optimizer = torch.optim.AdamW(
+            params=self.model.parameters(), lr=self.hparams["learning_rate"]
         )
         return {
             "optimizer": optimizer,

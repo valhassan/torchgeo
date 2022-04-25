@@ -192,12 +192,12 @@ class CCMEODataModule(pl.LightningDataModule):
 
         return sample
 
-    def prepare_data(self) -> None:
-        """Make sure that the dataset is downloaded.
-
-        This method is only called once per run.
-        """
-        DigitalGlobe(self.root_dir, download=False, checksum=False)
+    # def prepare_data(self) -> None:  # TODO
+    #     """Make sure that the dataset is downloaded.
+    #
+    #     This method is only called once per run.
+    #     """
+    #     DigitalGlobe(self.root_dir, download=False, checksum=False)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Initialize the main ``Dataset`` objects.

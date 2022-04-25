@@ -6,21 +6,21 @@ trainer:
   min_epochs: 4
   max_epochs: 20
   benchmark: True
-  #auto_lr_find: True
   enable_progress_bar: True
   precision: 16
+  #auto_lr_find: True
   #auto_scale_batch_size: binsearch
 
 experiment:
   task: "ccmeo"
   name: "ccmeo_tests"
   module:
-    loss: "jaccard"
+    loss: "softbce"
     segmentation_model: "unet"
-    encoder_name: "resnet18"
+    encoder_name: "resnet50"
     encoder_weights: null
     encoder_output_stride: 16
-    learning_rate: 1e-3
+    learning_rate: 5e-4
     learning_rate_schedule_patience: 6
     in_channels: 3
     num_classes: 1
@@ -30,11 +30,11 @@ experiment:
   datamodule:
     root_dir: "/home/remi/PycharmProjects/geo-deep-learning/data/"
     train_splits:
-      - "trn"
+      - "trn.csv"
     val_splits:
-      - "val"
+      - "val.csv"
     test_splits:
-      - "test"
+      - "test.csv"
     patch_size: 512
     batch_size: 12
     num_workers: 4
