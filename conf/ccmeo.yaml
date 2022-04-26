@@ -8,6 +8,7 @@ trainer:
   benchmark: True
   enable_progress_bar: True
   precision: 16
+  strategy: ddp
   #auto_lr_find: True
   #auto_scale_batch_size: binsearch
 
@@ -15,18 +16,23 @@ experiment:
   task: "ccmeo"
   name: "ccmeo_tests"
   module:
-    loss: "softbce"
-    segmentation_model: "unet"
-    encoder_name: "resnet50"
-    encoder_weights: null
-    encoder_output_stride: 16
-    learning_rate: 5e-4
+    loss:
+      _target_: segmentation_models_pytorch.losses.SoftBCEWithLogitsLoss
+      ignore_index: null
+      #mode: binary
+    model:
+      _target_: segmentation_models_pytorch.Unet
+      encoder_name: resnet50
+      encoder_weights: imagenet
+      #encoder_output_stride: 16
+      in_channels: 3
+      classes: 1
+    optimizer:
+      _target_: torch.optim.AdamW
+      lr: 5e-4
+      weight_decay: 4e-5
     learning_rate_schedule_patience: 6
-    in_channels: 3
-    num_classes: 1
     num_filters: 256
-    ignore_zeros: True
-    imagenet_pretraining: True
   datamodule:
     root_dir: "/home/remi/PycharmProjects/geo-deep-learning/data/"
     train_splits:
@@ -38,5 +44,5 @@ experiment:
     patch_size: 512
     batch_size: 12
     num_workers: 4
-    class_set: ${experiment.module.num_classes}
+    class_set: ${experiment.module.model.classes}
     use_prior_labels: False
