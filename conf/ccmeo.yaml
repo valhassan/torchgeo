@@ -28,7 +28,7 @@ experiment:
     ignore_zeros: True
     imagenet_pretraining: True
   datamodule:
-    root_dir: "/home/remi/PycharmProjects/geo-deep-learning/data/"
+    root_dir: "data"
     train_splits:
       - "trn.csv"
     val_splits:

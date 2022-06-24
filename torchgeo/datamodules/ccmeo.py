@@ -7,6 +7,7 @@ from typing import Union, Sequence, Any, Callable, Dict, Optional, List
 
 import numpy as np
 import torch
+from kornia.enhance import equalize_clahe, normalize_min_max
 from pytorch_lightning import LightningDataModule
 from skimage import exposure
 from torch import Tensor
@@ -14,7 +15,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torchgeo.datasets import stack_samples
 from torchgeo.samplers import Units, GridGeoSampler
-from torchvision.transforms import Compose
+from torchvision.transforms import Compose, Normalize
 
 import kornia.augmentation as K
 import matplotlib.pyplot as plt
@@ -35,6 +36,9 @@ class CCMEODataModule(pl.LightningDataModule):
     Uses the train/val/test splits from the dataset.
     """
 
+    band_means = torch.tensor([25.29, 33.29, 33.70]) / 255  # , 53.48])  # NIR
+    band_stds = torch.tensor([16.37, 17.67, 16.09]) / 255  # , 32.77])  # NIR
+
     def __init__(
         self,
         root_dir: str,
@@ -44,6 +48,9 @@ class CCMEODataModule(pl.LightningDataModule):
         batch_size: int = 64,
         num_workers: int = 0,
         patch_size: int = 256,
+        normalize: bool = True,
+        enhance_clahe: bool = True,
+        enhance_clip_limit: int = 5,
 
         **kwargs: Any
     ) -> None:
@@ -72,6 +79,12 @@ class CCMEODataModule(pl.LightningDataModule):
         # This is a rough estimate of how large of a patch we will need to sample in
         # EPSG:3857 in order to guarantee a large enough patch in the local CRS.
         self.original_patch_size = int(patch_size * 2.0)
+
+        self.normalize = normalize
+        self.enhance = enhance_clahe
+        self.enhance_clip_limit = enhance_clip_limit
+
+        self.norm = Normalize(self.band_means, self.band_stds)
 
     def on_after_batch_transfer(
         self, batch: Dict[str, Any], batch_idx: int
@@ -188,6 +201,12 @@ class CCMEODataModule(pl.LightningDataModule):
         sample["image"] = sample["image"] / 255.0
 
         sample["image"] = sample["image"].float()
+        if self.normalize:
+            sample["image"] = self.norm(sample["image"])
+        if self.enhance:
+            if self.normalize:
+                sample["image"] = normalize_min_max(sample["image"].unsqueeze(axis=0)).squeeze(axis=0)
+            sample["image"] = equalize_clahe(sample["image"], clip_limit=float(self.enhance_clip_limit), grid_size=(8, 8))
         sample["mask"] = sample["mask"].long()
 
         return sample

@@ -202,52 +202,6 @@ class CCMEO(VisionDataset, abc.ABC):
             tensor: Tensor = torch.from_numpy(array)  # type: ignore[attr-defined]
             return tensor, img.transform, img.crs
 
-    def _load_mask(
-        self, path: str, tfm: Affine, raster_crs: CRS, shape: Tuple[int, int]
-    ) -> Tensor:
-        """Rasterizes the dataset's labels (in geojson format).
-
-        Args:
-            path: path to the label
-            tfm: transform of corresponding image
-            shape: shape of corresponding image
-
-        Returns:
-            Tensor: label tensor
-        """
-        try:
-            with fiona.open(path) as src:
-                vector_crs = CRS(src.crs)
-                if raster_crs == vector_crs:
-                    labels = [feature["geometry"] for feature in src]
-                else:
-                    labels = [
-                        transform_geom(
-                            vector_crs.to_string(),
-                            raster_crs.to_string(),
-                            feature["geometry"],
-                        )
-                        for feature in src
-                    ]
-        except FionaValueError:
-            labels = []
-
-        if not labels:
-            mask_data = np.zeros(shape=shape)
-        else:
-            mask_data = rasterize(
-                labels,
-                out_shape=shape,
-                fill=0,  # nodata value
-                transform=tfm,
-                all_touched=False,
-                dtype=np.uint8,
-            )
-
-        mask: Tensor = torch.from_numpy(mask_data).long()  # type: ignore[attr-defined]
-
-        return mask
-
     def __len__(self) -> int:
         """Return the number of samples in the dataset.
 
@@ -271,7 +225,6 @@ class CCMEO(VisionDataset, abc.ABC):
         mask, *_ = self._load_image(files["label_path"])
         mask[mask == 255] = 0  # TODO: make ignore_index work
         mask = mask.squeeze()
-        #mask = self._load_mask(files["label_path"], tfm, raster_crs, (h, w))
 
         if not img.shape[-2:] == mask.shape[-2:]:
             raise ValueError(f"Mismatch between image chip shape ({img.shape}) and mask chip shape ({mask.shape})")
