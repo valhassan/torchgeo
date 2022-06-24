@@ -15,6 +15,7 @@ import torch
 from torchmetrics import Accuracy, JaccardIndex, Metric, MetricCollection
 
 from torchgeo.trainers import ClassificationTask, SemanticSegmentationTask
+from torchgeo.trainers.segmentation import BinarySemanticSegmentationTask
 from train import TASK_TO_MODULES_MAPPING
 
 
@@ -161,7 +162,7 @@ def main(args: argparse.Namespace) -> None:
             "weights": model.hparams["weights"],
             "loss": model.hparams["loss"],
         }
-    elif issubclass(TASK, SemanticSegmentationTask):
+    elif issubclass(TASK, SemanticSegmentationTask) or issubclass(TASK, BinarySemanticSegmentationTask):
         val_row: Dict[str, Union[str, float]] = {  # type: ignore[no-redef]
             "split": "val",
             "segmentation_model": model.hparams["segmentation_model"],
@@ -230,7 +231,7 @@ def main(args: argparse.Namespace) -> None:
                     "overall_accuracy": test_results["test_OverallAccuracy"].item(),
                 }
             )
-        elif issubclass(TASK, SemanticSegmentationTask):
+        elif issubclass(TASK, SemanticSegmentationTask) or issubclass(TASK, BinarySemanticSegmentationTask):
             val_row.update(
                 {
                     "overall_accuracy": val_results["val_Accuracy"].item(),

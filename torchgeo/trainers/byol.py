@@ -314,7 +314,7 @@ class BYOLTask(LightningModule):
     def config_task(self) -> None:
         """Configures the task based on kwargs parameters passed to the constructor."""
         in_channels = self.hparams["in_channels"]
-        pretrained = self.hparams["imagenet_pretraining"]
+        pretrained = self.hparams["experiment"]["module"]["encoder_weights"]
         encoder = None
 
         if self.hparams["encoder_name"] == "resnet18":
