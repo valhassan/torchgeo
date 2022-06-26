@@ -48,8 +48,8 @@ class CCMEODataModule(pl.LightningDataModule):
         batch_size: int = 64,
         num_workers: int = 0,
         patch_size: int = 256,
-        normalize: bool = True,
-        enhance_clahe: bool = True,
+        normalize: bool = False,
+        enhance_clahe: bool = False,
         enhance_clip_limit: int = 5,
 
         **kwargs: Any
@@ -81,7 +81,11 @@ class CCMEODataModule(pl.LightningDataModule):
         self.original_patch_size = int(patch_size * 2.0)
 
         self.normalize = normalize
+        if self.normalize:
+            print("NORMALIZE")
         self.enhance = enhance_clahe
+        if self.enhance:
+            print("ENHANCE CLAHE")
         self.enhance_clip_limit = enhance_clip_limit
 
         self.norm = Normalize(self.band_means, self.band_stds)

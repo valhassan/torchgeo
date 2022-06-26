@@ -10,6 +10,7 @@ import csv
 import os
 from typing import Any, Dict, Union
 
+import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import torch
 from torchmetrics import Accuracy, JaccardIndex, Metric, MetricCollection
@@ -100,7 +101,7 @@ def run_eval_loop(
     Returns:
         the result of ``metric.compute()``
     """
-    for batch in dataloader:
+    for index, batch in enumerate(dataloader):
         x = batch["image"].to(device)
         if "mask" in batch:
             y = batch["mask"].to(device)
@@ -109,6 +110,20 @@ def run_eval_loop(
         with torch.inference_mode():
             y_pred = model(x)
         metrics(y_pred, y)
+
+        for i in range(y_pred.shape[0]):
+            single_pred = y_pred[i]
+            single_label = y[i]
+            #single_pred = (single_pred.squeeze() >= 0.5).int()
+            single_pred = torch.sigmoid(input=single_pred)
+            fig, (axpred, axlabel) = plt.subplots(1, 2, figsize=(14, 7))
+            axpred.imshow(single_pred.squeeze())
+            axlabel.imshow(single_label.squeeze())
+            plt.axis("off")
+            #plt.show()
+            plt.savefig(f"C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\MB13\\rebirth\\MB13_{index}_{i}.png")
+            plt.close()
+            print(f"C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\MB13\\rebirth\\MB13_{index}_{i}.png")
     results = metrics.compute()
     metrics.reset()
     return results
@@ -138,10 +153,10 @@ def main(args: argparse.Namespace) -> None:
         root_dir=args.root_dir,
         num_workers=args.num_workers,
         batch_size=args.batch_size,
-        # FIXME: necessary for chesapeake_cvpr
-        # train_splits=["ny-train"],
-        # val_splits=["ny-val"],
-        # test_splits=["ny-test"],
+        # FIXME: necessary for ccmeo, chesapeake, ...
+        train_splits=["C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"],
+        val_splits=["C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"],
+        test_splits=["C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"],
     )
     dm.setup()
 
@@ -165,20 +180,20 @@ def main(args: argparse.Namespace) -> None:
     elif issubclass(TASK, SemanticSegmentationTask) or issubclass(TASK, BinarySemanticSegmentationTask):
         val_row: Dict[str, Union[str, float]] = {  # type: ignore[no-redef]
             "split": "val",
-            "segmentation_model": model.hparams["segmentation_model"],
-            "encoder_name": model.hparams["encoder_name"],
-            "encoder_weights": model.hparams["encoder_weights"],
-            "learning_rate": model.hparams["learning_rate"],
-            "loss": model.hparams["loss"],
+            #"segmentation_model": model.hparams["segmentation_model"],
+            #"encoder_name": model.hparams["encoder_name"],
+            #"encoder_weights": model.hparams["encoder_weights"],
+            #"learning_rate": model.hparams["learning_rate"],
+            #"loss": model.hparams["loss"],
         }
 
         test_row: Dict[str, Union[str, float]] = {  # type: ignore[no-redef]
             "split": "test",
-            "segmentation_model": model.hparams["segmentation_model"],
-            "encoder_name": model.hparams["encoder_name"],
-            "encoder_weights": model.hparams["encoder_weights"],
-            "learning_rate": model.hparams["learning_rate"],
-            "loss": model.hparams["loss"],
+            #"segmentation_model": model.hparams["segmentation_model"],
+            #"encoder_name": model.hparams["encoder_name"],
+            #"encoder_weights": model.hparams["encoder_weights"],
+            #"learning_rate": model.hparams["learning_rate"],
+            #"loss": model.hparams["loss"],
         }
     else:
         raise ValueError(f"{TASK} is not supported")
