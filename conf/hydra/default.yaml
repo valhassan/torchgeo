@@ -1,0 +1,41 @@
+# output paths for hydra logs
+run:
+  dir: logs/runs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+sweep:
+  dir: logs/multiruns/${now:%Y-%m-%d_%H-%M-%S}
+  subdir: ${hydra.job.num}
+
+# for hyperparameter optimization with Optuna: https://hydra.cc/docs/next/plugins/optuna_sweeper/
+sweeper:
+  sampler:
+    seed: 123
+  direction: maximize
+  study_name: run_ccmeo
+  storage: null
+  n_trials: 3
+  n_jobs: 1
+
+  search_space:
+    experiment.module.optimizer.lr:
+      type: float
+      log: True
+      low: 1e-7
+      high: 0.01
+    experiment.module.loss._target_:
+      type: categorical
+      choices: ["egmentation_models_pytorch.losses.SoftBCEWithLogitsLoss"]
+    experiment.module.model._target_:
+      type: categorical
+      choices: ['segmentation_models_pytorch.Unet']
+    experiment.module.model.encoder_name:
+      type: categorical
+      choices: ['resnet50']
+    experiment.module.optimizer._target_:
+      type: categorical
+      choices: ['torch.optim.AdamW']
+
+# you can set here environment variables that are universal for all users
+# for system specific variables (like data paths) it's better to use .env file!
+job:
+  env_set:
+    EXAMPLE_VAR: "example_value"

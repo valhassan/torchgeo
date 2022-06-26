@@ -1,3 +1,11 @@
+defaults:
+  - hydra: default
+  - override hydra/hydra_logging: colorlog # enable color logging to make it pretty
+  - override hydra/job_logging: colorlog # enable color logging to make it pretty
+  - override hydra/sweeper: optuna
+  - override hydra/sweeper/sampler: tpe
+  - _self_
+
 config_file: null  # This lets the user pass a config filename to load other arguments from
 
 program:  # These are the arguments that define how the train.py script works
