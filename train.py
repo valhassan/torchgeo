@@ -194,7 +194,8 @@ def main(conf: DictConfig) -> None:
     # Run experiment
     ######################################
     trainer.fit(model=task, datamodule=datamodule)
-    trainer.test(model=task, datamodule=datamodule)
+    test_metrics = trainer.test(model=task, datamodule=datamodule)
+    print(test_metrics)
 
 
 if __name__ == "__main__":
