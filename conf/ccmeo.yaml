@@ -1,12 +1,13 @@
 defaults:
   - override hydra/sweeper: optuna
   - override hydra/sweeper/sampler: tpe
+  - _self_
 
 program:  # These are the arguments that define how the train.py script works
   seed: 0
   output_dir: output
   data_dir: data
-  log_dir: logs
+  log_dir: "/home/remi/PycharmProjects/torchgeo/logs"
   overwrite: True
 
 trainer:
@@ -45,15 +46,15 @@ experiment:
     learning_rate_schedule_patience: 6
     num_filters: 256
   datamodule:
-    root_dir: "data"
+    root_dir: "/home/remi/PycharmProjects/geo-deep-learning/dataset/template_project"
     train_splits:
-      - "C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"
+      - "/home/remi/PycharmProjects/geo-deep-learning/dataset/template_project/tiles512_3bands/template_project_feat4_min-annot1_trn.csv"
     val_splits:
-      - "C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"
+      - "/home/remi/PycharmProjects/geo-deep-learning/dataset/template_project/tiles512_3bands/template_project_feat4_min-annot1_val.csv"
     test_splits:
-      - "C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"
+      - "/home/remi/PycharmProjects/geo-deep-learning/dataset/template_project/tiles512_3bands/template_project_feat4_min-annot1_val.csv"
     patch_size: 512
-    batch_size: 4
+    batch_size: 12
     num_workers: 8
     class_set: ${experiment.module.model.classes}
     use_prior_labels: False
@@ -63,13 +64,13 @@ y: 1
 hydra:
   sweeper:
     _target_: hydra_plugins.hydra_optuna_sweeper.optuna_sweeper.OptunaSweeper
-    direction: maximise
+    direction: maximize
     storage: null
-    study_name: sphere
+    study_name: ccmeo_optuna_tests
     n_trials: 20
     n_jobs: 1
 
-    params:
+    search_space:
       experiment.module.optimizer.lr:
         type: float
         log: True
