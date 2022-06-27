@@ -1,16 +1,27 @@
-program:
+defaults:
+  - override hydra/sweeper: optuna
+  - override hydra/sweeper/sampler: tpe
+
+program:  # These are the arguments that define how the train.py script works
+  seed: 0
+  output_dir: output
+  data_dir: data
+  log_dir: logs
   overwrite: True
-  log_dir: ./logs
+
 trainer:
   gpus: 1
-  min_epochs: 4
-  max_epochs: 20
+  min_epochs: 1
+  max_epochs: 1
   benchmark: True
   enable_progress_bar: True
   precision: 16
   strategy: ddp
   #auto_lr_find: True
   #auto_scale_batch_size: binsearch
+  limit_train_batches: 2
+  limit_val_batches: 2
+  limit_test_batches: 2
 
 experiment:
   task: "ccmeo"
@@ -36,13 +47,43 @@ experiment:
   datamodule:
     root_dir: "data"
     train_splits:
-      - "trn.csv"
+      - "C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"
     val_splits:
-      - "val.csv"
+      - "C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"
     test_splits:
-      - "test.csv"
+      - "C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"
     patch_size: 512
-    batch_size: 12
-    num_workers: 4
+    batch_size: 4
+    num_workers: 8
     class_set: ${experiment.module.model.classes}
     use_prior_labels: False
+
+y: 1
+# for hyperparameter optimization with Optuna: https://hydra.cc/docs/next/plugins/optuna_sweeper/
+hydra:
+  sweeper:
+    _target_: hydra_plugins.hydra_optuna_sweeper.optuna_sweeper.OptunaSweeper
+    direction: maximise
+    storage: null
+    study_name: sphere
+    n_trials: 20
+    n_jobs: 1
+
+    params:
+      experiment.module.optimizer.lr:
+        type: float
+        log: True
+        low: 1e-7
+        high: 0.01
+      experiment.module.loss._target_:
+        type: categorical
+        choices: ["segmentation_models_pytorch.losses.SoftBCEWithLogitsLoss"]
+      experiment.module.model._target_:
+        type: categorical
+        choices: ['segmentation_models_pytorch.Unet']
+      experiment.module.model.encoder_name:
+        type: categorical
+        choices: ['resnet50', 'resnet101']
+      experiment.module.optimizer._target_:
+        type: categorical
+        choices: ['torch.optim.AdamW']

@@ -8,6 +8,7 @@
 import os
 from typing import Any, Dict, Tuple, Type, cast
 
+import hydra
 import pytorch_lightning as pl
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning import loggers as pl_loggers
@@ -117,11 +118,13 @@ def set_up_omegaconf() -> DictConfig:
     return conf
 
 
+@hydra.main(config_path="conf", config_name="ccmeo")
 def main(conf: DictConfig) -> None:
     """Main training loop."""
     ######################################
     # Setup output directory
     ######################################
+    conf = OmegaConf.create(conf)
 
     experiment_name = conf.experiment.name
     task_name = conf.experiment.task
@@ -209,11 +212,11 @@ if __name__ == "__main__":
     }
     os.environ.update(_rasterio_best_practices)
 
-    conf = set_up_omegaconf()
+    #conf = set_up_omegaconf()
 
     # Set random seed for reproducibility
     # https://pytorch-lightning.readthedocs.io/en/latest/api/pytorch_lightning.utilities.seed.html#pytorch_lightning.utilities.seed.seed_everything
-    pl.seed_everything(conf.program.seed)
+    #pl.seed_everything(conf.program.seed)
 
     # Main training procedure
-    main(conf)
+    main()
