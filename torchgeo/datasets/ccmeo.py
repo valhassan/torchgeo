@@ -228,7 +228,11 @@ class CCMEO(VisionDataset, abc.ABC):
 
         if not img.shape[-2:] == mask.shape[-2:]:
             raise ValueError(f"Mismatch between image chip shape ({img.shape}) and mask chip shape ({mask.shape})")
-        sample = {"image": img, "mask": mask}
+        sample = {"image": img,
+                  "mask": mask,
+                  "image_path": str(files["image_path"]),
+                  "label_path": str(files["label_path"]),
+                  "aoi_id": files["image_path"].parent.parent.stem}
 
         if self.transforms is not None:
             sample = self.transforms(sample)
@@ -624,7 +628,7 @@ class InferenceDataset(RasterDataset):
         data = data.float()
 
         key = "image" if self.is_image else "mask"
-        sample = {key: data, "crs": self.crs, "bbox": query}
+        sample = {key: data, "crs": self.crs, "bbox": query, "files": filepaths}
 
         if self.transforms is not None:
             sample = self.transforms(sample)
