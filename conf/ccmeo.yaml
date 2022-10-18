@@ -33,12 +33,13 @@ experiment:
       ignore_index: null
       #mode: binary
     model:
-      _target_: segmentation_models_pytorch.Unet
-      encoder_name: resnet50
-      encoder_weights: imagenet
+      _target_: segmentation_models_pytorch.models.UnetPlusPlus
+#      encoder_name: resnet50
+#      encoder_weights: imagenet
       #encoder_output_stride: 16
       in_channels: 3
       classes: 1
+    model_state_dict:
     optimizer:
       _target_: torch.optim.AdamW
       lr: 5e-4
