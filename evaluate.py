@@ -8,16 +8,53 @@
 import argparse
 import csv
 import os
+from pathlib import Path
 from typing import Any, Dict, Union
 
-import matplotlib.pyplot as plt
+import numpy as np
 import pytorch_lightning as pl
+import rasterio
 import torch
 from torchmetrics import Accuracy, JaccardIndex, Metric, MetricCollection
 
 from torchgeo.trainers import ClassificationTask, SemanticSegmentationTask
 from torchgeo.trainers.segmentation import BinarySemanticSegmentationTask
 from train import TASK_TO_MODULES_MAPPING
+
+
+def create_new_raster_from_base(input_raster, output_raster, write_array):
+    """Function to use info from input raster to create new one.
+    Args:
+        input_raster: input raster path and name
+        output_raster: raster name and path to be created with info from input
+        write_array (optional): array to write into the new raster
+
+    Return:
+        none
+    """
+    src = rasterio.open(input_raster)
+    if len(write_array.shape) == 2:  # 2D array
+        count = 1
+    elif len(write_array.shape) == 3:  # 3D array
+        count = write_array.shape[0]
+    else:
+        raise ValueError(f'Array with {len(write_array.shape)} dimensions cannot be written by rasterio.')
+
+    # Cannot write to 'VRT' driver
+    driver = 'GTiff' if src.driver == 'VRT' else src.driver
+
+    with rasterio.open(output_raster, 'w',
+                       driver=driver,
+                       width=src.width,
+                       height=src.height,
+                       count=count,
+                       crs=src.crs,
+                       dtype=np.uint8,
+                       transform=src.transform) as dst:
+        if count == 1:
+            dst.write(write_array[:, :], 1)
+        else:
+            dst.write(write_array)
 
 
 def set_up_parser() -> argparse.ArgumentParser:
@@ -50,6 +87,12 @@ def set_up_parser() -> argparse.ArgumentParser:
         required=True,
         type=str,
         help="root directory of the dataset for the accompanying task",
+    )
+    parser.add_argument(
+        "--test-split",
+        required=True,
+        type=str,
+        help="path to csv listing test imagery tiles",
     )
     parser.add_argument(
         "-b",
@@ -89,6 +132,7 @@ def run_eval_loop(
     dataloader: Any,
     device: torch.device,  # type: ignore[name-defined]
     metrics: Metric,
+    root_dir = None,
 ) -> Any:
     """Runs a standard test loop over a dataloader and records metrics.
 
@@ -113,17 +157,25 @@ def run_eval_loop(
 
         for i in range(y_pred.shape[0]):
             single_pred = y_pred[i]
-            single_label = y[i]
-            #single_pred = (single_pred.squeeze() >= 0.5).int()
-            single_pred = torch.sigmoid(input=single_pred)
-            fig, (axpred, axlabel) = plt.subplots(1, 2, figsize=(14, 7))
-            axpred.imshow(single_pred.squeeze())
-            axlabel.imshow(single_label.squeeze())
-            plt.axis("off")
-            #plt.show()
-            plt.savefig(f"C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\MB13\\rebirth\\MB13_{index}_{i}.png")
-            plt.close()
-            print(f"C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\MB13\\rebirth\\MB13_{index}_{i}.png")
+            #single_label = y[i]
+            single_pred = torch.sigmoid(input=single_pred).squeeze() * 255
+            single_pred = single_pred.cpu().numpy()
+            if root_dir:
+                # save to raster
+                out_dir = Path(root_dir) / batch["aoi_id"][i]
+                out_dir.mkdir(exist_ok=True)
+                out_file = out_dir / f"{Path(batch['image_path'][i]).stem}_inference.tif"
+                create_new_raster_from_base(batch["image_path"][i], out_file, single_pred)
+
+            # visualize with matplotlib
+            # fig, (axpred, axlabel) = plt.subplots(1, 2, figsize=(14, 7))
+            # axpred.imshow(single_pred.squeeze())
+            # axlabel.imshow(single_label.squeeze())
+            # plt.axis("off")
+            # #plt.show()
+            # plt.savefig(f"C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\MB13\\rebirth\\MB13_{index}_{i}.png")
+            # plt.close()
+            # print(f"C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\MB13\\rebirth\\MB13_{index}_{i}.png")
     results = metrics.compute()
     metrics.reset()
     return results
@@ -154,9 +206,9 @@ def main(args: argparse.Namespace) -> None:
         num_workers=args.num_workers,
         batch_size=args.batch_size,
         # FIXME: necessary for ccmeo, chesapeake, ...
-        train_splits=["C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"],
-        val_splits=["C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"],
-        test_splits=["C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\template_project_feat4_min-annot1_tst.csv"],
+        train_splits=[],
+        val_splits=[],
+        test_splits=[args.test_split],
     )
     dm.setup()
 
@@ -180,20 +232,10 @@ def main(args: argparse.Namespace) -> None:
     elif issubclass(TASK, SemanticSegmentationTask) or issubclass(TASK, BinarySemanticSegmentationTask):
         val_row: Dict[str, Union[str, float]] = {  # type: ignore[no-redef]
             "split": "val",
-            #"segmentation_model": model.hparams["segmentation_model"],
-            #"encoder_name": model.hparams["encoder_name"],
-            #"encoder_weights": model.hparams["encoder_weights"],
-            #"learning_rate": model.hparams["learning_rate"],
-            #"loss": model.hparams["loss"],
         }
 
         test_row: Dict[str, Union[str, float]] = {  # type: ignore[no-redef]
             "split": "test",
-            #"segmentation_model": model.hparams["segmentation_model"],
-            #"encoder_name": model.hparams["encoder_name"],
-            #"encoder_weights": model.hparams["encoder_weights"],
-            #"learning_rate": model.hparams["learning_rate"],
-            #"loss": model.hparams["loss"],
         }
     else:
         raise ValueError(f"{TASK} is not supported")
@@ -226,10 +268,10 @@ def main(args: argparse.Namespace) -> None:
     else:  # Test with PyTorch Lightning as usual
 
         val_results = run_eval_loop(
-            model, dm.val_dataloader(), device, model.val_metrics
+            model, dm.val_dataloader(), device, model.val_metrics, args.root_dir
         )
         test_results = run_eval_loop(
-            model, dm.test_dataloader(), device, model.test_metrics
+            model, dm.test_dataloader(), device, model.test_metrics, args.root_dir
         )
 
         # Save the results and model hyperparameters to a CSV file
@@ -247,20 +289,20 @@ def main(args: argparse.Namespace) -> None:
                 }
             )
         elif issubclass(TASK, SemanticSegmentationTask) or issubclass(TASK, BinarySemanticSegmentationTask):
-            val_row.update(
-                {
-                    "overall_accuracy": val_results["val_Accuracy"].item(),
-                    "jaccard_index": val_results["val_JaccardIndex"].item(),
-                }
-            )
+            # val_row.update(
+            #     {
+            #         #"overall_accuracy": val_results["val_Accuracy"].item(),
+            #         "jaccard_index": val_results["val_JaccardIndex"].item(),
+            #     }
+            # )
             test_row.update(
                 {
-                    "overall_accuracy": test_results["test_Accuracy"].item(),
+                    #"overall_accuracy": test_results["test_Accuracy"].item(),
                     "jaccard_index": test_results["test_JaccardIndex"].item(),
                 }
             )
 
-    assert set(val_row.keys()) == set(test_row.keys())
+    #assert set(val_row.keys()) == set(test_row.keys())
     fieldnames = list(test_row.keys())
 
     # Write to file
@@ -270,8 +312,24 @@ def main(args: argparse.Namespace) -> None:
             writer.writeheader()
     with open(args.output_fn, "a") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writerow(val_row)
+        #writer.writerow(val_row)
         writer.writerow(test_row)
+
+    cmds = []
+    for itered in Path(args.root_dir).iterdir():
+        if itered.is_dir():
+            itered = Path(str(itered).replace("${", "\$\{"))
+            build_vrt_cmd = f"gdalbuildvrt {args.root_dir}/{itered.stem}.vrt {itered}/*.tif"
+            print(build_vrt_cmd)
+            cmds.append(build_vrt_cmd)
+            #subprocess.call(build_vrt_cmd.split(" "))
+            translate_cmd = f'gdal_translate -of GTiff -co "COMPRESS=LZW" -co "TILED=YES" {args.root_dir}/{itered.stem}.vrt {args.root_dir}/{itered.stem}.tif'
+            print(translate_cmd)
+            cmds.append(translate_cmd)
+            #subprocess.call(translate_cmd.split(" "))
+
+    with open(args.output_fn.replace("csv", "sh"), "w") as f:
+        f.writelines(f"{cmd}\n" for cmd in cmds)
 
 
 if __name__ == "__main__":

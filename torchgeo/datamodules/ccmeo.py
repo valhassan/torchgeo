@@ -9,7 +9,6 @@ import numpy as np
 import torch
 from kornia.enhance import equalize_clahe, normalize_min_max
 from pytorch_lightning import LightningDataModule
-from skimage import exposure
 from torch import Tensor
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
@@ -129,69 +128,6 @@ class CCMEODataModule(pl.LightningDataModule):
             batch["mask"] = y.squeeze(1).long()
 
         return batch
-
-    def pad_to(
-        self, size: int = 512, image_value: int = 0, mask_value: int = 0
-    ) -> Callable[[Dict[str, Tensor]], Dict[str, Tensor]]:
-        """Returns a function to perform a padding transform on a single sample.
-
-        Args:
-            size: output image size
-            image_value: value to pad image with
-            mask_value: value to pad mask with
-
-        Returns:
-            function to perform padding
-        """
-
-        def pad_inner(sample: Dict[str, Tensor]) -> Dict[str, Tensor]:
-            _, height, width = sample["image"].shape
-            assert height <= size and width <= size
-
-            height_pad = size - height
-            width_pad = size - width
-
-            # See https://pytorch.org/docs/stable/generated/torch.nn.functional.pad.html
-            # for a description of the format of the padding tuple
-            sample["image"] = F.pad(
-                sample["image"],
-                (0, width_pad, 0, height_pad),
-                mode="constant",
-                value=image_value,
-            )
-            sample["mask"] = F.pad(
-                sample["mask"],
-                (0, width_pad, 0, height_pad),
-                mode="constant",
-                value=mask_value,
-            )
-            return sample
-
-        return pad_inner
-
-    def center_crop(
-        self, size: int = 512
-    ) -> Callable[[Dict[str, Tensor]], Dict[str, Tensor]]:
-        """Returns a function to perform a center crop transform on a single sample.
-
-        Args:
-            size: output image size
-
-        Returns:
-            function to perform center crop
-        """
-
-        def center_crop_inner(sample: Dict[str, Tensor]) -> Dict[str, Tensor]:
-            _, height, width = sample["image"].shape
-
-            y1 = (height - size) // 2
-            x1 = (width - size) // 2
-            sample["image"] = sample["image"][:, y1 : y1 + size, x1 : x1 + size]
-            sample["mask"] = sample["mask"][y1 : y1 + size, x1 : x1 + size]
-
-            return sample
-
-        return center_crop_inner
 
     def preprocess(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         """Transform a single sample from the Dataset.
@@ -347,14 +283,7 @@ def enhance(
         """
         if clip_limit is None:
             return sample
-        sample['image'] = np.moveaxis(sample["image"].numpy().astype(np.uint8), 0, -1)  # send channels last
-        img_adapteq = []
-        for band in range(sample['image'].shape[-1]):
-            out_band = exposure.equalize_adapthist(sample["image"][..., band], clip_limit=clip_limit)
-            out_band = (out_band*255).astype(np.uint8)
-            img_adapteq.append(out_band)
-        out_stacked = np.stack(img_adapteq, axis=-1)
-        sample["image"] = torch.from_numpy(np.moveaxis(out_stacked, -1, 0))
+        sample['image'] = equalize_clahe(sample['image'], clip_limit=clip_limit, grid_size=(8, 8))
         return sample
     return _enhance
 
