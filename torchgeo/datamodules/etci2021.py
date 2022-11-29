@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import torch
-from torch import Generator  # type: ignore[attr-defined]
+from torch import Generator
 from torch.utils.data import DataLoader, random_split
 from torchvision.transforms import Normalize
 
@@ -24,35 +24,31 @@ class ETCI2021DataModule(pl.LightningDataModule):
     .. versionadded:: 0.2
     """
 
-    band_means = torch.tensor(  # type: ignore[attr-defined]
-        [0.52253931, 0.52253931, 0.52253931, 0.61221701, 0.61221701, 0.61221701, 0]
+    band_means = torch.tensor(
+        [0.52253931, 0.52253931, 0.52253931, 0.61221701, 0.61221701, 0.61221701]
     )
 
-    band_stds = torch.tensor(  # type: ignore[attr-defined]
-        [0.35221376, 0.35221376, 0.35221376, 0.37364622, 0.37364622, 0.37364622, 1]
+    band_stds = torch.tensor(
+        [0.35221376, 0.35221376, 0.35221376, 0.37364622, 0.37364622, 0.37364622]
     )
 
     def __init__(
-        self,
-        root_dir: str,
-        seed: int = 0,
-        batch_size: int = 64,
-        num_workers: int = 0,
-        **kwargs: Any,
+        self, seed: int = 0, batch_size: int = 64, num_workers: int = 0, **kwargs: Any
     ) -> None:
         """Initialize a LightningDataModule for ETCI2021 based DataLoaders.
 
         Args:
-            root_dir: The ``root`` arugment to pass to the ETCI2021 Dataset classes
             seed: The seed value to use when doing the dataset random_split
             batch_size: The batch size to use in all created DataLoaders
             num_workers: The number of workers to use in all created DataLoaders
+            **kwargs: Additional keyword arguments passed to
+                :class:`~torchgeo.datasets.ETCI2021`
         """
-        super().__init__()  # type: ignore[no-untyped-call]
-        self.root_dir = root_dir
+        super().__init__()
         self.seed = seed
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.kwargs = kwargs
 
         self.norm = Normalize(self.band_means, self.band_stds)
 
@@ -67,17 +63,15 @@ class ETCI2021DataModule(pl.LightningDataModule):
         Returns:
             preprocessed sample
         """
-        image = sample["image"]
-        water_mask = sample["mask"][0].unsqueeze(0)
-        flood_mask = sample["mask"][1]
-        flood_mask = (flood_mask > 0).long()
-
-        sample["image"] = torch.cat(  # type: ignore[attr-defined]
-            [image, water_mask], dim=0
-        ).float()
+        sample["image"] = sample["image"].float()
         sample["image"] /= 255.0
         sample["image"] = self.norm(sample["image"])
-        sample["mask"] = flood_mask
+
+        if "mask" in sample:
+            flood_mask = sample["mask"][1]
+            flood_mask = (flood_mask > 0).long()
+            sample["mask"] = flood_mask
+
         return sample
 
     def prepare_data(self) -> None:
@@ -85,7 +79,7 @@ class ETCI2021DataModule(pl.LightningDataModule):
 
         This method is only called once per run.
         """
-        ETCI2021(self.root_dir, checksum=False)
+        ETCI2021(**self.kwargs)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Initialize the main ``Dataset`` objects.
@@ -96,14 +90,14 @@ class ETCI2021DataModule(pl.LightningDataModule):
             stage: stage to set up
         """
         train_val_dataset = ETCI2021(
-            self.root_dir, split="train", transforms=self.preprocess
+            split="train", transforms=self.preprocess, **self.kwargs
         )
         self.test_dataset = ETCI2021(
-            self.root_dir, split="val", transforms=self.preprocess
+            split="val", transforms=self.preprocess, **self.kwargs
         )
 
         size_train_val = len(train_val_dataset)
-        size_train = int(0.8 * size_train_val)
+        size_train = round(0.8 * size_train_val)
         size_val = size_train_val - size_train
 
         self.train_dataset, self.val_dataset = random_split(
@@ -153,4 +147,4 @@ class ETCI2021DataModule(pl.LightningDataModule):
 
     def plot(self, *args: Any, **kwargs: Any) -> plt.Figure:
         """Run :meth:`torchgeo.datasets.ETCI2021.plot`."""
-        return self.val_dataset.plot(*args, **kwargs)
+        return self.test_dataset.plot(*args, **kwargs)

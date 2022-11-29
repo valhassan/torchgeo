@@ -6,7 +6,7 @@
 import json
 import os
 from functools import lru_cache
-from typing import Any, Callable, Dict, Optional, cast
+from typing import Any, Callable, Dict, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,11 +14,11 @@ import torch
 from PIL import Image
 from torch import Tensor
 
-from .geo import VisionDataset
+from .geo import NonGeoDataset
 from .utils import check_integrity, download_radiant_mlhub_dataset, extract_archive
 
 
-class TropicalCycloneWindEstimation(VisionDataset):
+class TropicalCyclone(NonGeoDataset):
     """Tropical Cyclone Wind Estimation Competition dataset.
 
     A collection of tropical storms in the Atlantic and East Pacific Oceans from 2000 to
@@ -30,7 +30,7 @@ class TropicalCycloneWindEstimation(VisionDataset):
 
     If you use this dataset in your research, please cite the following paper:
 
-    * http://doi.org/10.1109/JSTARS.2020.3011907
+    * https://doi.org/10.1109/JSTARS.2020.3011907
 
     .. note::
 
@@ -38,6 +38,10 @@ class TropicalCycloneWindEstimation(VisionDataset):
 
        * `radiant-mlhub <https://pypi.org/project/radiant-mlhub/>`_ to download the
          imagery and labels from the Radiant Earth MLHub
+
+    .. versionchanged:: 0.4.0
+        Class name changed from TropicalCycloneWindEstimation to TropicalCyclone
+        to be consistent with TropicalCycloneDataModule.
     """
 
     collection_id = "nasa_tropical_storm_competition"
@@ -143,11 +147,16 @@ class TropicalCycloneWindEstimation(VisionDataset):
         filename = os.path.join(directory.format("source"), "image.jpg")
         with Image.open(filename) as img:
             if img.height != self.size or img.width != self.size:
-                img = img.resize(size=(self.size, self.size), resample=Image.BILINEAR)
+                # Moved in PIL 9.1.0
+                try:
+                    resample = Image.Resampling.BILINEAR
+                except AttributeError:
+                    resample = Image.BILINEAR
+                img = img.resize(size=(self.size, self.size), resample=resample)
             array: "np.typing.NDArray[np.int_]" = np.array(img)
             if len(array.shape) == 3:
                 array = array[:, :, 0]
-            tensor: Tensor = torch.from_numpy(array)  # type: ignore[attr-defined]
+            tensor = torch.from_numpy(array)
             return tensor
 
     def _load_features(self, directory: str) -> Dict[str, Any]:
@@ -240,7 +249,7 @@ class TropicalCycloneWindEstimation(VisionDataset):
         if show_titles:
             title = f"Label: {label}"
             if showing_predictions:
-                title += f"\nPrediction: {cast(str, prediction)}"
+                title += f"\nPrediction: {prediction}"
             ax.set_title(title)
 
         if suptitle is not None:

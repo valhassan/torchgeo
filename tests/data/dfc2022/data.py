@@ -5,7 +5,6 @@
 
 import hashlib
 import os
-import random
 import shutil
 
 import numpy as np
@@ -16,7 +15,6 @@ from torchgeo.datasets import DFC2022
 SIZE = 32
 
 np.random.seed(0)
-random.seed(0)
 
 
 train_set = [
@@ -72,9 +70,9 @@ def create_file(path: str, dtype: str, num_channels: int) -> None:
             np.iinfo(profile["dtype"]).max, size=(SIZE, SIZE), dtype=profile["dtype"]
         )
 
-    src = rasterio.open(path, "w", **profile)
-    for i in range(1, profile["count"] + 1):
-        src.write(Z, i)
+    with rasterio.open(path, "w", **profile) as src:
+        for i in range(1, profile["count"] + 1):
+            src.write(Z, i)
 
 
 if __name__ == "__main__":

@@ -9,11 +9,11 @@ import glob
 import os
 import re
 import sys
+import warnings
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 import fiona
 import fiona.transform
-import matplotlib.pyplot as plt
 import numpy as np
 import pyproj
 import rasterio
@@ -47,7 +47,7 @@ class GeoDataset(Dataset[Dict[str, Any]], abc.ABC):
     * :term:`coordinate reference system (CRS)`
     * resolution
 
-    :class:`GeoDataset` is a special class of datasets. Unlike :class:`VisionDataset`,
+    :class:`GeoDataset` is a special class of datasets. Unlike :class:`NonGeoDataset`,
     the presence of geospatial information allows two or more datasets to be combined
     based on latitude/longitude. This allows users to do things like:
 
@@ -161,8 +161,7 @@ class GeoDataset(Dataset[Dict[str, Any]], abc.ABC):
         Returns:
             length of the dataset
         """
-        count: int = self.index.get_size()
-        return count
+        return len(self.index)
 
     def __str__(self) -> str:
         """Return the informal string representation of the object.
@@ -181,10 +180,7 @@ class GeoDataset(Dataset[Dict[str, Any]], abc.ABC):
 
     def __getstate__(
         self,
-    ) -> Tuple[
-        Dict[Any, Any],
-        List[Tuple[int, Tuple[float, float, float, float, float, float], str]],
-    ]:
+    ) -> Tuple[Dict[str, Any], List[Tuple[Any, Any, Optional[Any]]]]:
         """Define how instances are pickled.
 
         Returns:
@@ -283,7 +279,6 @@ class RasterDataset(GeoDataset):
     #: searched for to find other files:
     #:
     #: * ``band``: replaced with requested band name
-    #: * ``resolution``: replaced with a glob character
     filename_regex = ".*"
 
     #: Date format string used to parse date from filename.
@@ -303,18 +298,15 @@ class RasterDataset(GeoDataset):
     #: Names of RGB bands in the dataset, used for plotting
     rgb_bands: List[str] = []
 
-    #: If True, stretch the image from the 2nd percentile to the 98th percentile,
-    #: used for plotting
-    stretch = False
-
     #: Color map for the dataset, used for plotting
     cmap: Dict[int, Tuple[int, int, int, int]] = {}
 
     def __init__(
         self,
-        root: str,
+        root: str = "data",
         crs: Optional[CRS] = None,
         res: Optional[float] = None,
+        bands: Optional[Sequence[str]] = None,
         transforms: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
         cache: bool = True,
     ) -> None:
@@ -326,6 +318,7 @@ class RasterDataset(GeoDataset):
                 (defaults to the CRS of the first file found)
             res: resolution of the dataset in units of CRS
                 (defaults to the resolution of the first file found)
+            bands: bands to return (defaults to all bands)
             transforms: a function/transform that takes an input sample
                 and returns a transformed version
             cache: if True, cache file handle to speed up repeated sampling
@@ -380,6 +373,21 @@ class RasterDataset(GeoDataset):
                 f"No {self.__class__.__name__} data was found in '{root}'"
             )
 
+        if bands and self.all_bands:
+            band_indexes = [self.all_bands.index(i) + 1 for i in bands]
+            self.bands = bands
+            assert len(band_indexes) == len(self.bands)
+        elif bands:
+            msg = (
+                f"{self.__class__.__name__} is missing an `all_bands` attribute,"
+                " so `bands` cannot be specified."
+            )
+            raise AssertionError(msg)
+        else:
+            band_indexes = None
+            self.bands = self.all_bands
+
+        self.band_indexes = band_indexes
         self._crs = cast(CRS, crs)
         self.res = cast(float, res)
 
@@ -396,7 +404,7 @@ class RasterDataset(GeoDataset):
             IndexError: if query is not found in the index
         """
         hits = self.index.intersection(tuple(query), objects=True)
-        filepaths = [hit.object for hit in hits]
+        filepaths = cast(List[str], [hit.object for hit in hits])
 
         if not filepaths:
             raise IndexError(
@@ -406,7 +414,7 @@ class RasterDataset(GeoDataset):
         if self.separate_files:
             data_list: List[Tensor] = []
             filename_regex = re.compile(self.filename_regex, re.VERBOSE)
-            for band in getattr(self, "bands", self.all_bands):
+            for band in self.bands:
                 band_filepaths = []
                 for filepath in filepaths:
                     filename = os.path.basename(filepath)
@@ -417,16 +425,12 @@ class RasterDataset(GeoDataset):
                             start = match.start("band")
                             end = match.end("band")
                             filename = filename[:start] + band + filename[end:]
-                        if "resolution" in match.groupdict():
-                            start = match.start("resolution")
-                            end = match.end("resolution")
-                            filename = filename[:start] + "*" + filename[end:]
                     filepath = glob.glob(os.path.join(directory, filename))[0]
                     band_filepaths.append(filepath)
                 data_list.append(self._merge_files(band_filepaths, query))
-            data = torch.cat(data_list)  # type: ignore[attr-defined]
+            data = torch.cat(data_list)
         else:
-            data = self._merge_files(filepaths, query)
+            data = self._merge_files(filepaths, query, self.band_indexes)
 
         key = "image" if self.is_image else "mask"
         sample = {key: data, "crs": self.crs, "bbox": query}
@@ -436,12 +440,18 @@ class RasterDataset(GeoDataset):
 
         return sample
 
-    def _merge_files(self, filepaths: Sequence[str], query: BoundingBox) -> Tensor:
+    def _merge_files(
+        self,
+        filepaths: Sequence[str],
+        query: BoundingBox,
+        band_indexes: Optional[Sequence[int]] = None,
+    ) -> Tensor:
         """Load and merge one or more files.
 
         Args:
             filepaths: one or more files to load and merge
             query: (minx, maxx, miny, maxy, mint, maxt) coordinates to index
+            band_indexes: indexes of bands to be used
 
         Returns:
             image/mask at that index
@@ -454,14 +464,19 @@ class RasterDataset(GeoDataset):
         bounds = (query.minx, query.miny, query.maxx, query.maxy)
         if len(vrt_fhs) == 1:
             src = vrt_fhs[0]
-            out_width = int(round((query.maxx - query.minx) / self.res))
-            out_height = int(round((query.maxy - query.miny) / self.res))
-            out_shape = (src.count, out_height, out_width)
+            out_width = round((query.maxx - query.minx) / self.res)
+            out_height = round((query.maxy - query.miny) / self.res)
+            count = len(band_indexes) if band_indexes else src.count
+            out_shape = (count, out_height, out_width)
             dest = src.read(
-                out_shape=out_shape, window=from_bounds(*bounds, src.transform)
+                indexes=band_indexes,
+                out_shape=out_shape,
+                window=from_bounds(*bounds, src.transform),
             )
         else:
-            dest, _ = rasterio.merge.merge(vrt_fhs, bounds, self.res)
+            dest, _ = rasterio.merge.merge(
+                vrt_fhs, bounds, self.res, indexes=band_indexes
+            )
 
         # fix numpy dtypes which are not supported by pytorch tensors
         if dest.dtype == np.uint16:
@@ -469,7 +484,7 @@ class RasterDataset(GeoDataset):
         elif dest.dtype == np.uint32:
             dest = dest.astype(np.int64)
 
-        tensor: Tensor = torch.tensor(dest)  # type: ignore[attr-defined]
+        tensor = torch.tensor(dest)
         return tensor
 
     @functools.lru_cache(maxsize=128)
@@ -503,53 +518,6 @@ class RasterDataset(GeoDataset):
         else:
             return src
 
-    def plot(self, data: Tensor) -> None:
-        """Plot a data sample.
-
-        Args:
-            data: the data to plot
-
-        Raises:
-            AssertionError: if ``is_image`` is True and ``data`` has a different number
-                of channels than expected
-        """
-        array = data.squeeze().numpy()
-
-        if self.is_image:
-            bands = getattr(self, "bands", self.all_bands)
-            assert array.shape[0] == len(bands)
-
-            # Only plot RGB bands
-            if bands and self.rgb_bands:
-                indices: "np.typing.NDArray[np.int_]" = np.array(
-                    [bands.index(band) for band in self.rgb_bands]
-                )
-                array = array[indices]
-
-            # Convert from CxHxW to HxWxC
-            array = np.rollaxis(array, 0, 3)
-
-        if self.cmap:
-            # Convert from class labels to RGBA values
-            cmap: "np.typing.NDArray[np.int_]" = np.array(
-                [self.cmap[i] for i in range(len(self.cmap))]
-            )
-            array = cmap[array]
-
-        if self.stretch:
-            # Stretch to the range of 2nd to 98th percentile
-            per02 = np.percentile(array, 2)
-            per98 = np.percentile(array, 98)
-            array = (array - per02) / (per98 - per02)
-            array = np.clip(array, 0, 1)
-
-        # Plot the data
-        ax = plt.axes()
-        ax.imshow(array)
-        ax.axis("off")
-        plt.show()
-        plt.close()
-
 
 class VectorDataset(GeoDataset):
     """Abstract base class for :class:`GeoDataset` stored as vector files."""
@@ -567,6 +535,7 @@ class VectorDataset(GeoDataset):
         crs: Optional[CRS] = None,
         res: float = 0.0001,
         transforms: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+        label_name: Optional[str] = None,
     ) -> None:
         """Initialize a new Dataset instance.
 
@@ -577,14 +546,20 @@ class VectorDataset(GeoDataset):
             res: resolution of the dataset in units of CRS
             transforms: a function/transform that takes input sample and its target as
                 entry and returns a transformed version
+            label_name: name of the dataset property that has the label to be
+                rasterized into the mask
 
         Raises:
             FileNotFoundError: if no files are found in ``root``
+
+        .. versionadded:: 0.4
+            The *label_name* parameter.
         """
         super().__init__(transforms)
 
         self.root = root
         self.res = res
+        self.label_name = label_name
 
         # Populate the dataset index
         i = 0
@@ -653,6 +628,8 @@ class VectorDataset(GeoDataset):
                     shape = fiona.transform.transform_geom(
                         src.crs, self.crs.to_dict(), feature["geometry"]
                     )
+                    if self.label_name:
+                        shape = (shape, feature["properties"][self.label_name])
                     shapes.append(shape)
 
         # Rasterize geometries
@@ -661,38 +638,24 @@ class VectorDataset(GeoDataset):
         transform = rasterio.transform.from_bounds(
             query.minx, query.miny, query.maxx, query.maxy, width, height
         )
-        masks = rasterio.features.rasterize(
-            shapes, out_shape=(int(height), int(width)), transform=transform
-        )
+        if shapes:
+            masks = rasterio.features.rasterize(
+                shapes, out_shape=(round(height), round(width)), transform=transform
+            )
+        else:
+            # If no features are found in this query, return an empty mask
+            # with the default fill value and dtype used by rasterize
+            masks = np.zeros((round(height), round(width)), dtype=np.uint8)
 
-        sample = {
-            "mask": torch.tensor(masks),  # type: ignore[attr-defined]
-            "crs": self.crs,
-            "bbox": query,
-        }
+        sample = {"mask": torch.tensor(masks), "crs": self.crs, "bbox": query}
 
         if self.transforms is not None:
             sample = self.transforms(sample)
 
         return sample
 
-    def plot(self, data: Tensor) -> None:
-        """Plot a data sample.
 
-        Args:
-            data: the data to plot
-        """
-        array = data.squeeze().numpy()
-
-        # Plot the image
-        ax = plt.axes()
-        ax.imshow(array)
-        ax.axis("off")
-        plt.show()
-        plt.close()
-
-
-class VisionDataset(Dataset[Dict[str, Any]], abc.ABC):
+class NonGeoDataset(Dataset[Dict[str, Any]], abc.ABC):
     """Abstract base class for datasets lacking geospatial information.
 
     This base class is designed for datasets with pre-defined image chips.
@@ -728,11 +691,25 @@ class VisionDataset(Dataset[Dict[str, Any]], abc.ABC):
         """
         return f"""\
 {self.__class__.__name__} Dataset
-    type: VisionDataset
+    type: NonGeoDataset
     size: {len(self)}"""
 
 
-class VisionClassificationDataset(VisionDataset, ImageFolder):  # type: ignore[misc]
+class VisionDataset(NonGeoDataset):
+    """Abstract base class for datasets lacking geospatial information.
+
+    .. deprecated:: 0.3
+       Use :class:`NonGeoDataset` instead.
+    """
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "VisionDataset":
+        """Create a new instance of VisionDataset."""
+        msg = "VisionDataset is deprecated, use NonGeoDataset instead."
+        warnings.warn(msg, DeprecationWarning)
+        return super().__new__(cls, *args, **kwargs)
+
+
+class NonGeoClassificationDataset(NonGeoDataset, ImageFolder):  # type: ignore[misc]
     """Abstract base class for classification datasets lacking geospatial information.
 
     This base class is designed for datasets with pre-defined image chips which
@@ -741,12 +718,12 @@ class VisionClassificationDataset(VisionDataset, ImageFolder):  # type: ignore[m
 
     def __init__(
         self,
-        root: str,
+        root: str = "data",
         transforms: Optional[Callable[[Dict[str, Tensor]], Dict[str, Tensor]]] = None,
         loader: Optional[Callable[[str], Any]] = pil_loader,
         is_valid_file: Optional[Callable[[str], bool]] = None,
     ) -> None:
-        """Initialize a new VisionClassificationDataset instance.
+        """Initialize a new NonGeoClassificationDataset instance.
 
         Args:
             root: root directory where dataset can be found
@@ -805,11 +782,26 @@ class VisionClassificationDataset(VisionDataset, ImageFolder):  # type: ignore[m
         """
         img, label = ImageFolder.__getitem__(self, index)
         array: "np.typing.NDArray[np.int_]" = np.array(img)
-        tensor: Tensor = torch.from_numpy(array)  # type: ignore[attr-defined]
+        tensor = torch.from_numpy(array)
         # Convert from HxWxC to CxHxW
         tensor = tensor.permute((2, 0, 1))
-        label = torch.tensor(label)  # type: ignore[attr-defined]
+        label = torch.tensor(label)
         return tensor, label
+
+
+class VisionClassificationDataset(NonGeoClassificationDataset):
+    """Abstract base class for classification datasets lacking geospatial information.
+
+    .. deprecated:: 0.3
+       Use :class:`NonGeoClassificationDataset` instead.
+    """
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "VisionClassificationDataset":
+        """Create a new instance of VisionClassificationDataset."""
+        msg = "VisionClassificationDataset is deprecated, "
+        msg += "use NonGeoClassificationDataset instead."
+        warnings.warn(msg, DeprecationWarning)
+        return cast(VisionClassificationDataset, super().__new__(cls))
 
 
 class IntersectionDataset(GeoDataset):
@@ -839,6 +831,7 @@ class IntersectionDataset(GeoDataset):
         collate_fn: Callable[
             [Sequence[Dict[str, Any]]], Dict[str, Any]
         ] = concat_samples,
+        transforms: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     ) -> None:
         """Initialize a new Dataset instance.
 
@@ -846,11 +839,16 @@ class IntersectionDataset(GeoDataset):
             dataset1: the first dataset
             dataset2: the second dataset
             collate_fn: function used to collate samples
+            transforms: a function/transform that takes input sample and its target as
+                entry and returns a transformed version
 
         Raises:
             ValueError: if either dataset is not a :class:`GeoDataset`
+
+        .. versionadded:: 0.4
+            The *transforms* parameter.
         """
-        super().__init__()
+        super().__init__(transforms)
         self.datasets = [dataset1, dataset2]
         self.collate_fn = collate_fn
 
@@ -909,7 +907,12 @@ class IntersectionDataset(GeoDataset):
         # All datasets are guaranteed to have a valid query
         samples = [ds[query] for ds in self.datasets]
 
-        return self.collate_fn(samples)
+        sample = self.collate_fn(samples)
+
+        if self.transforms is not None:
+            sample = self.transforms(sample)
+
+        return sample
 
     def __str__(self) -> str:
         """Return the informal string representation of the object.
@@ -951,6 +954,7 @@ class UnionDataset(GeoDataset):
         collate_fn: Callable[
             [Sequence[Dict[str, Any]]], Dict[str, Any]
         ] = merge_samples,
+        transforms: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     ) -> None:
         """Initialize a new Dataset instance.
 
@@ -958,11 +962,16 @@ class UnionDataset(GeoDataset):
             dataset1: the first dataset
             dataset2: the second dataset
             collate_fn: function used to collate samples
+            transforms: a function/transform that takes input sample and its target as
+                entry and returns a transformed version
 
         Raises:
             ValueError: if either dataset is not a :class:`GeoDataset`
+
+        .. versionadded:: 0.4
+            The *transforms* parameter.
         """
-        super().__init__()
+        super().__init__(transforms)
         self.datasets = [dataset1, dataset2]
         self.collate_fn = collate_fn
 
@@ -1019,10 +1028,15 @@ class UnionDataset(GeoDataset):
         # Not all datasets are guaranteed to have a valid query
         samples = []
         for ds in self.datasets:
-            if ds.index.intersection(tuple(query)):
+            if list(ds.index.intersection(tuple(query))):
                 samples.append(ds[query])
 
-        return self.collate_fn(samples)
+        sample = self.collate_fn(samples)
+
+        if self.transforms is not None:
+            sample = self.transforms(sample)
+
+        return sample
 
     def __str__(self) -> str:
         """Return the informal string representation of the object.

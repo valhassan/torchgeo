@@ -11,7 +11,14 @@ from rasterio.crs import CRS
 from torch.utils.data import DataLoader
 
 from torchgeo.datasets import BoundingBox, GeoDataset, stack_samples
-from torchgeo.samplers import GeoSampler, GridGeoSampler, RandomGeoSampler, Units
+from torchgeo.samplers import (
+    GeoSampler,
+    GridGeoSampler,
+    PreChippedGeoSampler,
+    RandomGeoSampler,
+    Units,
+    tile_to_chips,
+)
 
 
 class CustomGeoSampler(GeoSampler):
@@ -39,7 +46,9 @@ class CustomGeoDataset(GeoDataset):
 class TestGeoSampler:
     @pytest.fixture(scope="class")
     def dataset(self) -> CustomGeoDataset:
-        return CustomGeoDataset()
+        ds = CustomGeoDataset()
+        ds.index.insert(0, (0, 100, 200, 300, 400, 500))
+        return ds
 
     @pytest.fixture(scope="function")
     def sampler(self) -> CustomGeoSampler:
@@ -114,6 +123,22 @@ class TestRandomGeoSampler:
         for _ in sampler:
             continue
 
+    def test_point_data(self) -> None:
+        ds = CustomGeoDataset()
+        ds.index.insert(0, (0, 0, 0, 0, 0, 0))
+        ds.index.insert(1, (1, 1, 1, 1, 1, 1))
+        sampler = RandomGeoSampler(ds, 0, 10)
+        for _ in sampler:
+            continue
+
+    def test_weighted_sampling(self) -> None:
+        ds = CustomGeoDataset()
+        ds.index.insert(0, (0, 0, 0, 0, 0, 0))
+        ds.index.insert(1, (0, 10, 0, 10, 0, 10))
+        sampler = RandomGeoSampler(ds, 1, 10)
+        for bbox in sampler:
+            assert bbox == BoundingBox(0, 10, 0, 10, 0, 10)
+
     @pytest.mark.slow
     @pytest.mark.parametrize("num_workers", [0, 1, 2])
     def test_dataloader(
@@ -158,9 +183,8 @@ class TestGridGeoSampler:
             )
 
     def test_len(self, sampler: GridGeoSampler) -> None:
-        rows = int((100 - sampler.size[0]) // sampler.stride[0]) + 1
-        cols = int((100 - sampler.size[1]) // sampler.stride[1]) + 1
-        length = rows * cols * 2
+        rows, cols = tile_to_chips(sampler.roi, sampler.size, sampler.stride)
+        length = rows * cols * 2  # two items in dataset
         assert len(sampler) == length
 
     def test_roi(self, dataset: CustomGeoDataset) -> None:
@@ -171,16 +195,84 @@ class TestGridGeoSampler:
 
     def test_small_area(self) -> None:
         ds = CustomGeoDataset()
-        ds.index.insert(0, (0, 10, 0, 10, 0, 10))
-        ds.index.insert(1, (20, 21, 20, 21, 20, 21))
+        ds.index.insert(0, (0, 1, 0, 1, 0, 1))
         sampler = GridGeoSampler(ds, 2, 10)
+        assert len(sampler) == 0
+
+    def test_tiles_side_by_side(self) -> None:
+        ds = CustomGeoDataset()
+        ds.index.insert(0, (0, 10, 0, 10, 0, 10))
+        ds.index.insert(0, (0, 10, 10, 20, 0, 10))
+        sampler = GridGeoSampler(ds, 2, 10)
+        for bbox in sampler:
+            assert bbox.area > 0
+
+    def test_integer_multiple(self) -> None:
+        ds = CustomGeoDataset()
+        ds.index.insert(0, (0, 10, 0, 10, 0, 10))
+        sampler = GridGeoSampler(ds, 10, 10, units=Units.CRS)
+        iterator = iter(sampler)
+        assert len(sampler) == 1
+        assert next(iterator) == BoundingBox(0, 10, 0, 10, 0, 10)
+
+    def test_float_multiple(self) -> None:
+        ds = CustomGeoDataset()
+        ds.index.insert(0, (0, 6, 0, 5, 0, 10))
+        sampler = GridGeoSampler(ds, 5, 5, units=Units.CRS)
+        iterator = iter(sampler)
+        assert len(sampler) == 2
+        assert next(iterator) == BoundingBox(0, 5, 0, 5, 0, 10)
+        assert next(iterator) == BoundingBox(1, 6, 0, 5, 0, 10)
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("num_workers", [0, 1, 2])
+    def test_dataloader(
+        self, dataset: CustomGeoDataset, sampler: GridGeoSampler, num_workers: int
+    ) -> None:
+        dl = DataLoader(
+            dataset, sampler=sampler, num_workers=num_workers, collate_fn=stack_samples
+        )
+        for _ in dl:
+            continue
+
+
+class TestPreChippedGeoSampler:
+    @pytest.fixture(scope="class")
+    def dataset(self) -> CustomGeoDataset:
+        ds = CustomGeoDataset()
+        ds.index.insert(0, (0, 20, 0, 20, 0, 20))
+        ds.index.insert(1, (0, 30, 0, 30, 0, 30))
+        return ds
+
+    @pytest.fixture(scope="function")
+    def sampler(self, dataset: CustomGeoDataset) -> PreChippedGeoSampler:
+        return PreChippedGeoSampler(dataset, shuffle=True)
+
+    def test_iter(self, sampler: GridGeoSampler) -> None:
+        for _ in sampler:
+            continue
+
+    def test_len(self, sampler: GridGeoSampler) -> None:
+        assert len(sampler) == 2
+
+    def test_roi(self, dataset: CustomGeoDataset) -> None:
+        roi = BoundingBox(5, 15, 5, 15, 5, 15)
+        sampler = PreChippedGeoSampler(dataset, roi=roi)
+        for query in sampler:
+            assert query == roi
+
+    def test_point_data(self) -> None:
+        ds = CustomGeoDataset()
+        ds.index.insert(0, (0, 0, 0, 0, 0, 0))
+        ds.index.insert(1, (1, 1, 1, 1, 1, 1))
+        sampler = PreChippedGeoSampler(ds)
         for _ in sampler:
             continue
 
     @pytest.mark.slow
     @pytest.mark.parametrize("num_workers", [0, 1, 2])
     def test_dataloader(
-        self, dataset: CustomGeoDataset, sampler: GridGeoSampler, num_workers: int
+        self, dataset: CustomGeoDataset, sampler: PreChippedGeoSampler, num_workers: int
     ) -> None:
         dl = DataLoader(
             dataset, sampler=sampler, num_workers=num_workers, collate_fn=stack_samples

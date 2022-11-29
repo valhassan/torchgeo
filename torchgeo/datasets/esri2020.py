@@ -98,7 +98,7 @@ class Esri2020(RasterDataset):
 
         self._verify()
 
-        super().__init__(root, crs, res, transforms, cache)
+        super().__init__(root, crs, res, transforms=transforms, cache=cache)
 
     def _verify(self) -> None:
         """Verify the integrity of the dataset.
@@ -122,7 +122,7 @@ class Esri2020(RasterDataset):
             raise RuntimeError(
                 f"Dataset not found in `root={self.root}` and `download=False`, "
                 "either specify a different `root` directory or use `download=True` "
-                "to automaticaly download the dataset."
+                "to automatically download the dataset."
             )
 
         # Download the dataset
@@ -137,7 +137,7 @@ class Esri2020(RasterDataset):
         """Extract the dataset."""
         extract_archive(os.path.join(self.root, self.zipfile))
 
-    def plot(  # type: ignore[override]
+    def plot(
         self,
         sample: Dict[str, Any],
         show_titles: bool = True,

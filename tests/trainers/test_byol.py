@@ -21,7 +21,7 @@ class TestBYOL:
     def test_custom_augment_fn(self) -> None:
         encoder = resnet18()
         layer = encoder.conv1
-        new_layer = nn.Conv2d(  # type: ignore[attr-defined]
+        new_layer = nn.Conv2d(
             in_channels=4,
             out_channels=layer.out_channels,
             kernel_size=layer.kernel_size,
@@ -58,9 +58,10 @@ class TestBYOLTask:
         model.encoder = ClassificationTestModel(**model_kwargs)
 
         # Instantiate trainer
-        trainer = Trainer(fast_dev_run=True, log_every_n_steps=1)
+        trainer = Trainer(fast_dev_run=True, log_every_n_steps=1, max_epochs=1)
         trainer.fit(model=model, datamodule=datamodule)
         trainer.test(model=model, datamodule=datamodule)
+        trainer.predict(model=model, dataloaders=datamodule.val_dataloader())
 
     def test_invalid_encoder(self) -> None:
         kwargs = {
@@ -68,6 +69,6 @@ class TestBYOLTask:
             "imagenet_pretraining": False,
             "encoder_name": "invalid_encoder",
         }
-        error_message = "Encoder type 'invalid_encoder' is not valid."
-        with pytest.raises(ValueError, match=error_message):
+        error_message = "module 'torchvision.models' has no attribute 'invalid_encoder'"
+        with pytest.raises(AttributeError, match=error_message):
             BYOLTask(**kwargs)

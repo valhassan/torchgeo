@@ -3,10 +3,12 @@
 
 """National Agriculture Imagery Program (NAIP) datamodule."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
+import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
+from torchvision.transforms import Compose
 
 from ..datasets import NAIP, BoundingBox, Chesapeake13, stack_samples
 from ..samplers.batch import RandomBatchGeoSampler
@@ -29,8 +31,8 @@ class NAIPChesapeakeDataModule(pl.LightningDataModule):
 
     def __init__(
         self,
-        naip_root_dir: str,
-        chesapeake_root_dir: str,
+        naip_root: str,
+        chesapeake_root: str,
         batch_size: int = 64,
         num_workers: int = 0,
         patch_size: int = 256,
@@ -39,20 +41,24 @@ class NAIPChesapeakeDataModule(pl.LightningDataModule):
         """Initialize a LightningDataModule for NAIP and Chesapeake based DataLoaders.
 
         Args:
-            naip_root_dir: directory containing NAIP data
-            chesapeake_root_dir: directory containing Chesapeake data
+            naip_root: directory containing NAIP data
+            chesapeake_root: directory containing Chesapeake data
             batch_size: The batch size to use in all created DataLoaders
             num_workers: The number of workers to use in all created DataLoaders
             patch_size: size of patches to sample
+            **kwargs: Additional keyword arguments passed to
+                :class:`~torchgeo.datasets.NAIP` and
+                :class:`~torchgeo.datasets.Chesapeake13`
         """
-        super().__init__()  # type: ignore[no-untyped-call]
-        self.naip_root_dir = naip_root_dir
-        self.chesapeake_root_dir = chesapeake_root_dir
+        super().__init__()
+        self.naip_root = naip_root
+        self.chesapeake_root = chesapeake_root
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.patch_size = patch_size
+        self.kwargs = kwargs
 
-    def naip_transform(self, sample: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         """Transform a single sample from the NAIP Dataset.
 
         Args:
@@ -61,10 +67,8 @@ class NAIPChesapeakeDataModule(pl.LightningDataModule):
         Returns:
             preprocessed NAIP data
         """
-        sample["image"] = sample["image"] / 255.0
         sample["image"] = sample["image"].float()
-
-        del sample["bbox"]
+        sample["image"] /= 255.0
 
         return sample
 
@@ -79,8 +83,18 @@ class NAIPChesapeakeDataModule(pl.LightningDataModule):
         """
         sample["mask"] = sample["mask"].long()[0]
 
-        del sample["bbox"]
+        return sample
 
+    def remove_bbox(self, sample: Dict[str, Any]) -> Dict[str, Any]:
+        """Removes the bounding box property from a sample.
+
+        Args:
+            sample: dictionary with geographic metadata
+
+        Returns
+            sample without the bbox property
+        """
+        del sample["bbox"]
         return sample
 
     def prepare_data(self) -> None:
@@ -88,7 +102,7 @@ class NAIPChesapeakeDataModule(pl.LightningDataModule):
 
         This method is only called once per run.
         """
-        Chesapeake13(self.chesapeake_root_dir, download=False, checksum=False)
+        Chesapeake13(self.chesapeake_root, **self.kwargs)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Initialize the main ``Dataset`` objects.
@@ -100,16 +114,21 @@ class NAIPChesapeakeDataModule(pl.LightningDataModule):
         """
         # TODO: these transforms will be applied independently, this won't work if we
         # add things like random horizontal flip
-        chesapeake = Chesapeake13(
-            self.chesapeake_root_dir, transforms=self.chesapeake_transform
+
+        naip_transforms = Compose([self.preprocess, self.remove_bbox])
+        chesapeak_transforms = Compose([self.chesapeake_transform, self.remove_bbox])
+
+        self.chesapeake = Chesapeake13(
+            self.chesapeake_root, transforms=chesapeak_transforms, **self.kwargs
         )
-        naip = NAIP(
-            self.naip_root_dir,
-            chesapeake.crs,
-            chesapeake.res,
-            transforms=self.naip_transform,
+        self.naip = NAIP(
+            self.naip_root,
+            self.chesapeake.crs,
+            self.chesapeake.res,
+            transforms=naip_transforms,
+            **self.kwargs,
         )
-        self.dataset = chesapeake & naip
+        self.dataset = self.chesapeake & self.naip
 
         # TODO: figure out better train/val/test split
         roi = self.dataset.bounds
@@ -120,10 +139,14 @@ class NAIPChesapeakeDataModule(pl.LightningDataModule):
         test_roi = BoundingBox(roi.minx, roi.maxx, midy, roi.maxy, roi.mint, roi.maxt)
 
         self.train_sampler = RandomBatchGeoSampler(
-            naip, self.patch_size, self.batch_size, self.length, train_roi
+            self.naip, self.patch_size, self.batch_size, self.length, train_roi
         )
-        self.val_sampler = GridGeoSampler(naip, self.patch_size, self.stride, val_roi)
-        self.test_sampler = GridGeoSampler(naip, self.patch_size, self.stride, test_roi)
+        self.val_sampler = GridGeoSampler(
+            self.naip, self.patch_size, self.stride, val_roi
+        )
+        self.test_sampler = GridGeoSampler(
+            self.naip, self.patch_size, self.stride, test_roi
+        )
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Return a DataLoader for training.
@@ -165,3 +188,15 @@ class NAIPChesapeakeDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             collate_fn=stack_samples,
         )
+
+    def plot(self, *args: Any, **kwargs: Any) -> Tuple[plt.Figure, plt.Figure]:
+        """Run NAIP and Chesapeake plot methods.
+
+        See :meth:`torchgeo.datasets.NAIP.plot` and
+        :meth:`torchgeo.datasets.Chesapeake.plot`.
+
+        .. versionadded:: 0.4
+        """
+        image = self.naip.plot(*args, **kwargs)
+        label = self.chesapeake.plot(*args, **kwargs)
+        return image, label

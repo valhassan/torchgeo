@@ -5,7 +5,7 @@
 
 import glob
 import os
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import matplotlib.pyplot as plt
 import torch
@@ -155,12 +155,12 @@ class GlobBiomass(RasterDataset):
         )
         self.measurement = measurement
 
-        self.filename_glob = "*0_{}*.tif".format(self.measurement)
-        self.zipfile_glob = "*0_{}.zip".format(self.measurement)
+        self.filename_glob = f"*0_{self.measurement}*.tif"
+        self.zipfile_glob = f"*0_{self.measurement}.zip"
 
         self._verify()
 
-        super().__init__(root, crs, res, transforms, cache)
+        super().__init__(root, crs, res, transforms=transforms, cache=cache)
 
     def __getitem__(self, query: BoundingBox) -> Dict[str, Any]:
         """Retrieve image/mask and metadata indexed by query.
@@ -176,7 +176,7 @@ class GlobBiomass(RasterDataset):
             IndexError: if query is not found in the index
         """
         hits = self.index.intersection(tuple(query), objects=True)
-        filepaths = [hit.object for hit in hits]
+        filepaths = cast(List[str], [hit.object for hit in hits])
 
         if not filepaths:
             raise IndexError(
@@ -189,7 +189,7 @@ class GlobBiomass(RasterDataset):
         std_error_paths = [f for f in filepaths if "err" in f]
         std_err_mask = self._merge_files(std_error_paths, query)
 
-        mask = torch.cat((mask, std_err_mask), dim=0)  # type: ignore[attr-defined]
+        mask = torch.cat((mask, std_err_mask), dim=0)
 
         sample = {"mask": mask, "crs": self.crs, "bbox": query}
 
@@ -225,7 +225,7 @@ class GlobBiomass(RasterDataset):
             "have manually downloaded the dataset as suggested in the documentation."
         )
 
-    def plot(  # type: ignore[override]
+    def plot(
         self,
         sample: Dict[str, Any],
         show_titles: bool = True,

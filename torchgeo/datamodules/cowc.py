@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
-from torch import Generator  # type: ignore[attr-defined]
+from torch import Generator
 from torch.utils.data import DataLoader, random_split
 
 from ..datasets import COWCCounting
@@ -21,28 +21,24 @@ class COWCCountingDataModule(pl.LightningDataModule):
     """LightningDataModule implementation for the COWC Counting dataset."""
 
     def __init__(
-        self,
-        root_dir: str,
-        seed: int,
-        batch_size: int = 64,
-        num_workers: int = 0,
-        **kwargs: Any,
+        self, seed: int = 0, batch_size: int = 64, num_workers: int = 0, **kwargs: Any
     ) -> None:
         """Initialize a LightningDataModule for COWC Counting based DataLoaders.
 
         Args:
-            root_dir: The ``root`` arugment to pass to the COWCCounting Dataset class
             seed: The seed value to use when doing the dataset random_split
             batch_size: The batch size to use in all created DataLoaders
             num_workers: The number of workers to use in all created DataLoaders
+            **kwargs: Additional keyword arguments passed to
+                :class:`~torchgeo.datasets.COWCCounting`
         """
-        super().__init__()  # type: ignore[no-untyped-call]
-        self.root_dir = root_dir
+        super().__init__()
         self.seed = seed
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.kwargs = kwargs
 
-    def custom_transform(self, sample: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         """Transform a single sample from the Dataset.
 
         Args:
@@ -51,8 +47,10 @@ class COWCCountingDataModule(pl.LightningDataModule):
         Returns:
             preprocessed sample
         """
-        sample["image"] = sample["image"] / 255.0  # scale to [0, 1]
-        sample["label"] = sample["label"].float()
+        sample["image"] = sample["image"].float()
+        sample["image"] /= 255.0  # scale to [0, 1]
+        if "label" in sample:
+            sample["label"] = sample["label"].float()
         return sample
 
     def prepare_data(self) -> None:
@@ -61,7 +59,7 @@ class COWCCountingDataModule(pl.LightningDataModule):
         This includes optionally downloading the dataset. This is done once per node,
         while :func:`setup` is done once per GPU.
         """
-        COWCCounting(self.root_dir, download=False)
+        COWCCounting(**self.kwargs)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Create the train/val/test splits based on the original Dataset objects.
@@ -73,10 +71,10 @@ class COWCCountingDataModule(pl.LightningDataModule):
             stage: stage to set up
         """
         train_val_dataset = COWCCounting(
-            self.root_dir, split="train", transforms=self.custom_transform
+            split="train", transforms=self.preprocess, **self.kwargs
         )
         self.test_dataset = COWCCounting(
-            self.root_dir, split="test", transforms=self.custom_transform
+            split="test", transforms=self.preprocess, **self.kwargs
         )
         self.train_dataset, self.val_dataset = random_split(
             train_val_dataset,
@@ -128,4 +126,4 @@ class COWCCountingDataModule(pl.LightningDataModule):
 
         .. versionadded:: 0.2
         """
-        return self.val_dataset.dataset.plot(*args, **kwargs)
+        return self.test_dataset.plot(*args, **kwargs)

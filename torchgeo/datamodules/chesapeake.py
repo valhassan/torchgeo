@@ -30,7 +30,6 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
 
     def __init__(
         self,
-        root_dir: str,
         train_splits: List[str],
         val_splits: List[str],
         test_splits: List[str],
@@ -46,8 +45,6 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
         """Initialize a LightningDataModule for Chesapeake CVPR based DataLoaders.
 
         Args:
-            root_dir: The ``root`` arugment to pass to the ChesapeakeCVPR Dataset
-                classes
             train_splits: The splits used to train the model, e.g. ["ny-train"]
             val_splits: The splits used to validate the model, e.g. ["ny-val"]
             test_splits: The splits used to test the model, e.g. ["ny-test"]
@@ -60,11 +57,13 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
             use_prior_labels: Flag for using a prior over high-resolution classes
                 instead of the high-resolution labels themselves
             prior_smoothing_constant: additive smoothing to add when using prior labels
+            **kwargs: Additional keyword arguments passed to
+                :class:`~torchgeo.datasets.ChesapeakeCVPR`
 
         Raises:
             ValueError: if ``use_prior_labels`` is used with ``class_set==7``
         """
-        super().__init__()  # type: ignore[no-untyped-call]
+        super().__init__()
         for state in train_splits + val_splits + test_splits:
             assert state in ChesapeakeCVPR.splits
         assert class_set in [5, 7]
@@ -74,7 +73,6 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
                 + " class set of labels"
             )
 
-        self.root_dir = root_dir
         self.train_splits = train_splits
         self.val_splits = val_splits
         self.test_splits = test_splits
@@ -82,12 +80,13 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
         self.patch_size = patch_size
         # This is a rough estimate of how large of a patch we will need to sample in
         # EPSG:3857 in order to guarantee a large enough patch in the local CRS.
-        self.original_patch_size = int(patch_size * 2.0)
+        self.original_patch_size = patch_size * 2
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.class_set = class_set
         self.use_prior_labels = use_prior_labels
         self.prior_smoothing_constant = prior_smoothing_constant
+        self.kwargs = kwargs
 
         if self.use_prior_labels:
             self.layers = [
@@ -151,8 +150,8 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
         def center_crop_inner(sample: Dict[str, Tensor]) -> Dict[str, Tensor]:
             _, height, width = sample["image"].shape
 
-            y1 = (height - size) // 2
-            x1 = (width - size) // 2
+            y1 = round((height - size) / 2)
+            x1 = round((width - size) / 2)
             sample["image"] = sample["image"][:, y1 : y1 + size, x1 : x1 + size]
             sample["mask"] = sample["mask"][:, y1 : y1 + size, x1 : x1 + size]
 
@@ -169,24 +168,34 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
         Returns:
             preprocessed sample
         """
-        sample["image"] = sample["image"] / 255.0
-        sample["mask"] = sample["mask"].squeeze()
-
-        if self.use_prior_labels:
-            sample["mask"] = F.normalize(sample["mask"].float(), p=1, dim=0)
-            sample["mask"] = F.normalize(
-                sample["mask"] + self.prior_smoothing_constant, p=1, dim=0
-            )
-        else:
-            if self.class_set == 5:
-                sample["mask"][sample["mask"] == 5] = 4
-                sample["mask"][sample["mask"] == 6] = 4
-            sample["mask"] = sample["mask"].long()
-
         sample["image"] = sample["image"].float()
+        sample["image"] /= 255.0
 
+        if "mask" in sample:
+            sample["mask"] = sample["mask"].squeeze()
+            if self.use_prior_labels:
+                sample["mask"] = F.normalize(sample["mask"].float(), p=1, dim=0)
+                sample["mask"] = F.normalize(
+                    sample["mask"] + self.prior_smoothing_constant, p=1, dim=0
+                )
+            else:
+                if self.class_set == 5:
+                    sample["mask"][sample["mask"] == 5] = 4
+                    sample["mask"][sample["mask"] == 6] = 4
+                sample["mask"] = sample["mask"].long()
+
+        return sample
+
+    def remove_bbox(self, sample: Dict[str, Any]) -> Dict[str, Any]:
+        """Removes the bounding box property from a sample.
+
+        Args:
+            sample: dictionary with geographic metadata
+
+        Returns
+            sample without the bbox property
+        """
         del sample["bbox"]
-
         return sample
 
     def nodata_check(
@@ -205,10 +214,8 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
             num_channels, height, width = sample["image"].shape
 
             if height < size or width < size:
-                sample["image"] = torch.zeros(  # type: ignore[attr-defined]
-                    (num_channels, size, size)
-                )
-                sample["mask"] = torch.zeros((size, size))  # type: ignore[attr-defined]
+                sample["image"] = torch.zeros((num_channels, size, size))
+                sample["mask"] = torch.zeros((size, size))
 
             return sample
 
@@ -219,14 +226,7 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
 
         This method is called once per node, while :func:`setup` is called once per GPU.
         """
-        ChesapeakeCVPR(
-            self.root_dir,
-            splits=self.train_splits,
-            layers=self.layers,
-            transforms=None,
-            download=False,
-            checksum=False,
-        )
+        ChesapeakeCVPR(splits=self.train_splits, layers=self.layers, **self.kwargs)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Create the train/val/test splits based on the original Dataset objects.
@@ -242,6 +242,7 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
                 self.center_crop(self.patch_size),
                 self.nodata_check(self.patch_size),
                 self.preprocess,
+                self.remove_bbox,
             ]
         )
         val_transforms = Compose(
@@ -249,38 +250,34 @@ class ChesapeakeCVPRDataModule(LightningDataModule):
                 self.center_crop(self.patch_size),
                 self.nodata_check(self.patch_size),
                 self.preprocess,
+                self.remove_bbox,
             ]
         )
         test_transforms = Compose(
             [
                 self.pad_to(self.original_patch_size, image_value=0, mask_value=0),
                 self.preprocess,
+                self.remove_bbox,
             ]
         )
 
         self.train_dataset = ChesapeakeCVPR(
-            self.root_dir,
             splits=self.train_splits,
             layers=self.layers,
             transforms=train_transforms,
-            download=False,
-            checksum=False,
+            **self.kwargs,
         )
         self.val_dataset = ChesapeakeCVPR(
-            self.root_dir,
             splits=self.val_splits,
             layers=self.layers,
             transforms=val_transforms,
-            download=False,
-            checksum=False,
+            **self.kwargs,
         )
         self.test_dataset = ChesapeakeCVPR(
-            self.root_dir,
             splits=self.test_splits,
             layers=self.layers,
             transforms=test_transforms,
-            download=False,
-            checksum=False,
+            **self.kwargs,
         )
 
     def train_dataloader(self) -> DataLoader[Any]:

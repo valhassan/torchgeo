@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 import os
-from typing import Any, Dict, Generator, Type, cast
+from typing import Any, Dict, Type, cast
 
 import pytest
 import timm
@@ -39,13 +39,10 @@ class TestClassificationTask:
         ],
     )
     def test_trainer(
-        self,
-        monkeypatch: Generator[MonkeyPatch, None, None],
-        name: str,
-        classname: Type[LightningDataModule],
+        self, monkeypatch: MonkeyPatch, name: str, classname: Type[LightningDataModule]
     ) -> None:
         if name.startswith("so2sat"):
-            pytest.importorskip("h5py")
+            pytest.importorskip("h5py", minversion="2.6")
 
         conf = OmegaConf.load(os.path.join("tests", "conf", name + ".yaml"))
         conf_dict = OmegaConf.to_object(conf.experiment)
@@ -56,16 +53,15 @@ class TestClassificationTask:
         datamodule = classname(**datamodule_kwargs)
 
         # Instantiate model
-        monkeypatch.setattr(  # type: ignore[attr-defined]
-            timm, "create_model", create_model
-        )
+        monkeypatch.setattr(timm, "create_model", create_model)
         model_kwargs = conf_dict["module"]
         model = ClassificationTask(**model_kwargs)
 
         # Instantiate trainer
-        trainer = Trainer(fast_dev_run=True, log_every_n_steps=1)
+        trainer = Trainer(fast_dev_run=True, log_every_n_steps=1, max_epochs=1)
         trainer.fit(model=model, datamodule=datamodule)
         trainer.test(model=model, datamodule=datamodule)
+        trainer.predict(model=model, dataloaders=datamodule.val_dataloader())
 
     def test_no_logger(self) -> None:
         conf = OmegaConf.load(os.path.join("tests", "conf", "ucmerced.yaml"))
@@ -81,16 +77,18 @@ class TestClassificationTask:
         model = ClassificationTask(**model_kwargs)
 
         # Instantiate trainer
-        trainer = Trainer(logger=None, fast_dev_run=True, log_every_n_steps=1)
+        trainer = Trainer(
+            logger=False, fast_dev_run=True, log_every_n_steps=1, max_epochs=1
+        )
         trainer.fit(model=model, datamodule=datamodule)
 
     @pytest.fixture
     def model_kwargs(self) -> Dict[Any, Any]:
         return {
             "classification_model": "resnet18",
-            "in_channels": 1,
+            "in_channels": 13,
             "loss": "ce",
-            "num_classes": 1,
+            "num_classes": 10,
             "weights": "random",
         }
 
@@ -126,6 +124,17 @@ class TestClassificationTask:
         with pytest.raises(ValueError, match=match):
             ClassificationTask(**model_kwargs)
 
+    def test_missing_attributes(
+        self, model_kwargs: Dict[Any, Any], monkeypatch: MonkeyPatch
+    ) -> None:
+        monkeypatch.delattr(EuroSATDataModule, "plot")
+        datamodule = EuroSATDataModule(
+            root="tests/data/eurosat", batch_size=1, num_workers=0
+        )
+        model = ClassificationTask(**model_kwargs)
+        trainer = Trainer(fast_dev_run=True, log_every_n_steps=1, max_epochs=1)
+        trainer.validate(model=model, datamodule=datamodule)
+
 
 class TestMultiLabelClassificationTask:
     @pytest.mark.parametrize(
@@ -137,10 +146,7 @@ class TestMultiLabelClassificationTask:
         ],
     )
     def test_trainer(
-        self,
-        monkeypatch: Generator[MonkeyPatch, None, None],
-        name: str,
-        classname: Type[LightningDataModule],
+        self, monkeypatch: MonkeyPatch, name: str, classname: Type[LightningDataModule]
     ) -> None:
         conf = OmegaConf.load(os.path.join("tests", "conf", name + ".yaml"))
         conf_dict = OmegaConf.to_object(conf.experiment)
@@ -151,16 +157,15 @@ class TestMultiLabelClassificationTask:
         datamodule = classname(**datamodule_kwargs)
 
         # Instantiate model
-        monkeypatch.setattr(  # type: ignore[attr-defined]
-            timm, "create_model", create_model
-        )
+        monkeypatch.setattr(timm, "create_model", create_model)
         model_kwargs = conf_dict["module"]
         model = MultiLabelClassificationTask(**model_kwargs)
 
         # Instantiate trainer
-        trainer = Trainer(fast_dev_run=True, log_every_n_steps=1)
+        trainer = Trainer(fast_dev_run=True, log_every_n_steps=1, max_epochs=1)
         trainer.fit(model=model, datamodule=datamodule)
         trainer.test(model=model, datamodule=datamodule)
+        trainer.predict(model=model, dataloaders=datamodule.val_dataloader())
 
     def test_no_logger(self) -> None:
         conf = OmegaConf.load(os.path.join("tests", "conf", "bigearthnet_s1.yaml"))
@@ -176,16 +181,18 @@ class TestMultiLabelClassificationTask:
         model = MultiLabelClassificationTask(**model_kwargs)
 
         # Instantiate trainer
-        trainer = Trainer(logger=None, fast_dev_run=True, log_every_n_steps=1)
+        trainer = Trainer(
+            logger=False, fast_dev_run=True, log_every_n_steps=1, max_epochs=1
+        )
         trainer.fit(model=model, datamodule=datamodule)
 
     @pytest.fixture
     def model_kwargs(self) -> Dict[Any, Any]:
         return {
             "classification_model": "resnet18",
-            "in_channels": 1,
-            "loss": "ce",
-            "num_classes": 1,
+            "in_channels": 14,
+            "loss": "bce",
+            "num_classes": 19,
             "weights": "random",
         }
 
@@ -194,3 +201,14 @@ class TestMultiLabelClassificationTask:
         match = "Loss type 'invalid_loss' is not valid."
         with pytest.raises(ValueError, match=match):
             MultiLabelClassificationTask(**model_kwargs)
+
+    def test_missing_attributes(
+        self, model_kwargs: Dict[Any, Any], monkeypatch: MonkeyPatch
+    ) -> None:
+        monkeypatch.delattr(BigEarthNetDataModule, "plot")
+        datamodule = BigEarthNetDataModule(
+            root="tests/data/bigearthnet", batch_size=1, num_workers=0
+        )
+        model = MultiLabelClassificationTask(**model_kwargs)
+        trainer = Trainer(fast_dev_run=True, log_every_n_steps=1, max_epochs=1)
+        trainer.validate(model=model, datamodule=datamodule)

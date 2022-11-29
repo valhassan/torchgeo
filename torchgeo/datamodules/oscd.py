@@ -26,7 +26,7 @@ class OSCDDataModule(pl.LightningDataModule):
     .. versionadded:: 0.2
     """
 
-    band_means = torch.tensor(  # type: ignore[attr-defined]
+    band_means = torch.tensor(
         [
             1583.0741,
             1374.3202,
@@ -44,7 +44,7 @@ class OSCDDataModule(pl.LightningDataModule):
         ]
     )
 
-    band_stds = torch.tensor(  # type: ignore[attr-defined]
+    band_stds = torch.tensor(
         [
             52.1937,
             83.4168,
@@ -64,8 +64,6 @@ class OSCDDataModule(pl.LightningDataModule):
 
     def __init__(
         self,
-        root_dir: str,
-        bands: str = "all",
         train_batch_size: int = 32,
         num_workers: int = 0,
         val_split_pct: float = 0.2,
@@ -77,8 +75,6 @@ class OSCDDataModule(pl.LightningDataModule):
         """Initialize a LightningDataModule for OSCD based DataLoaders.
 
         Args:
-            root_dir: The ``root`` arugment to pass to the OSCD Dataset classes
-            bands: "rgb" or "all"
             train_batch_size: The batch size used in the train DataLoader
                 (val_batch_size == test_batch_size == 1)
             num_workers: The number of workers to use in all created DataLoaders
@@ -86,37 +82,34 @@ class OSCDDataModule(pl.LightningDataModule):
             patch_size: Size of random patch from image and mask (height, width)
             num_patches_per_tile: number of random patches per sample
             pad_size: size to pad images to during val/test steps
+            **kwargs: Additional keyword arguments passed to
+                :class:`~torchgeo.datasets.OSCD`
         """
-        super().__init__()  # type: ignore[no-untyped-call]
-        self.root_dir = root_dir
-        self.bands = bands
+        super().__init__()
         self.train_batch_size = train_batch_size
         self.num_workers = num_workers
         self.val_split_pct = val_split_pct
         self.patch_size = patch_size
         self.num_patches_per_tile = num_patches_per_tile
+        self.kwargs = kwargs
 
+        bands = kwargs.get("bands", "all")
         if bands == "rgb":
-            self.band_means = self.band_means[[3, 2, 1], None, None]
-            self.band_stds = self.band_stds[[3, 2, 1], None, None]
-        else:
-            self.band_means = self.band_means[:, None, None]
-            self.band_stds = self.band_stds[:, None, None]
+            self.band_means = self.band_means[[3, 2, 1]]
+            self.band_stds = self.band_stds[[3, 2, 1]]
 
-        self.norm = Normalize(self.band_means, self.band_stds)
         self.rcrop = K.AugmentationSequential(
             K.RandomCrop(patch_size), data_keys=["input", "mask"], same_on_batch=True
         )
         self.padto = K.PadTo(pad_size)
 
+        self.norm = Normalize(self.band_means, self.band_stds)
+
     def preprocess(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         """Transform a single sample from the Dataset."""
         sample["image"] = sample["image"].float()
-        sample["mask"] = sample["mask"]
         sample["image"] = self.norm(sample["image"])
-        sample["image"] = torch.flatten(  # type: ignore[attr-defined]
-            sample["image"], 0, 1
-        )
+        sample["image"] = torch.flatten(sample["image"], 0, 1)
         return sample
 
     def prepare_data(self) -> None:
@@ -124,7 +117,7 @@ class OSCDDataModule(pl.LightningDataModule):
 
         This method is only called once per run.
         """
-        OSCD(self.root_dir, split="train", bands=self.bands, checksum=False)
+        OSCD(split="train", **self.kwargs)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Initialize the main ``Dataset`` objects.
@@ -154,20 +147,13 @@ class OSCDDataModule(pl.LightningDataModule):
         # with the upsampling paths in encoder-decoder architectures
         test_transforms = Compose([self.preprocess, pad_to])
 
-        train_dataset = OSCD(
-            self.root_dir, split="train", bands=self.bands, transforms=train_transforms
-        )
+        train_dataset = OSCD(split="train", transforms=train_transforms, **self.kwargs)
 
         self.train_dataset: Dataset[Any]
         self.val_dataset: Dataset[Any]
 
         if self.val_split_pct > 0.0:
-            val_dataset = OSCD(
-                self.root_dir,
-                split="train",
-                bands=self.bands,
-                transforms=test_transforms,
-            )
+            val_dataset = OSCD(split="train", transforms=test_transforms, **self.kwargs)
             self.train_dataset, self.val_dataset, _ = dataset_split(
                 train_dataset, val_pct=self.val_split_pct, test_pct=0.0
             )
@@ -177,7 +163,7 @@ class OSCDDataModule(pl.LightningDataModule):
             self.val_dataset = train_dataset
 
         self.test_dataset = OSCD(
-            self.root_dir, split="test", bands=self.bands, transforms=test_transforms
+            split="test", transforms=test_transforms, **self.kwargs
         )
 
     def train_dataloader(self) -> DataLoader[Any]:
@@ -187,12 +173,8 @@ class OSCDDataModule(pl.LightningDataModule):
             r_batch: Dict[str, Any] = default_collate(  # type: ignore[no-untyped-call]
                 batch
             )
-            r_batch["image"] = torch.flatten(  # type: ignore[attr-defined]
-                r_batch["image"], 0, 1
-            )
-            r_batch["mask"] = torch.flatten(  # type: ignore[attr-defined]
-                r_batch["mask"], 0, 1
-            )
+            r_batch["image"] = torch.flatten(r_batch["image"], 0, 1)
+            r_batch["mask"] = torch.flatten(r_batch["mask"], 0, 1)
             return r_batch
 
         return DataLoader(

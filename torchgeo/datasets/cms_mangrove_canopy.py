@@ -215,11 +215,11 @@ class CMSGlobalMangroveCanopy(RasterDataset):
         )
         self.measurement = measurement
 
-        self.filename_glob = "**/Mangrove_{}_{}*".format(self.measurement, self.country)
+        self.filename_glob = f"**/Mangrove_{self.measurement}_{self.country}*"
 
         self._verify()
 
-        super().__init__(root, crs, res, transforms, cache)
+        super().__init__(root, crs, res, transforms=transforms, cache=cache)
 
     def _verify(self) -> None:
         """Verify the integrity of the dataset.
@@ -251,7 +251,7 @@ class CMSGlobalMangroveCanopy(RasterDataset):
         pathname = os.path.join(self.root, self.zipfile)
         extract_archive(pathname)
 
-    def plot(  # type: ignore[override]
+    def plot(
         self,
         sample: Dict[str, Any],
         show_titles: bool = True,

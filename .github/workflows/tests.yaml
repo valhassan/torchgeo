@@ -14,15 +14,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Clone repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3.1.0
     - name: Set up python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4.3.0
       with:
-        python-version: 3.9
+        python-version: '3.10'
     - name: Install pip dependencies
       run: |
-        pip install cython numpy  # needed for pycocotools
-        pip install .[datasets,tests]
+        pip install -r requirements/required.txt -r requirements/datasets.txt -r requirements/tests.txt
+        pip list
     - name: Run mypy checks
       run: mypy .
   pytest:
@@ -33,15 +33,15 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: [3.6, 3.7, 3.8, 3.9]
+        python-version: ['3.7', '3.8', '3.9', '3.10']
         exclude:
         - os: windows-latest
-          python-version: 3.6
+          python-version: '3.7'
     steps:
     - name: Clone repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3.1.0
     - name: Set up python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4.3.0
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install apt dependencies (Linux)
@@ -50,26 +50,53 @@ jobs:
     - name: Install brew dependencies (macOS)
       run: brew install rar
       if: ${{ runner.os == 'macOS' }}
-    - name: Install conda (Windows)
-      uses: conda-incubator/setup-miniconda@v2
-      with:
-        python-version: ${{ matrix.python-version }}
-        channels: conda-forge
-        channel-priority: strict
-      if: ${{ runner.os == 'Windows' }}
-    - name: Install conda dependencies (Windows)
+    - name: Install pacman dependencies (Windows)
+      shell: cmd
       run: |
-        # PyTorch isn't compatible with setuptools 59.6+, pin for now until new PyTorch release
-        # https://github.com/pytorch/pytorch/pull/69904
-        conda install 'fiona>=1.5' h5py 'rasterio>=1.0.16' 'setuptools<59.6'
-        conda list
-        conda info
+        set "PATH=%PATH%;c:\msys64\usr\bin"
+        pacman -S --noconfirm --needed unrar
       if: ${{ runner.os == 'Windows' }}
+    - name: Install pip dependencies (3.8+)
+      run: |
+        pip install -r requirements/required.txt -r requirements/datasets.txt -r requirements/tests.txt
+        pip list
+      if: ${{ matrix.python-version != '3.7' }}
+    - name: Install pip dependencies (3.7)
+      run: |
+        pip install -r requirements/required.old -r requirements/datasets.old -r requirements/tests.txt
+        pip list
+      if: ${{ matrix.python-version == '3.7' }}
+    - name: Run pytest checks (Linux/macOS)
+      run: pytest --cov=torchgeo --cov-report=xml
+      if: ${{ runner.os != 'Windows' }}
+    - name: Run pytest checks (Windows)
+      shell: cmd
+      run: |
+        set "PATH=%PATH%;c:\msys64\usr\bin"
+        pytest --cov=torchgeo --cov-report=xml
+      if: ${{ runner.os == 'Windows' }}
+    - name: Report coverage
+      uses: codecov/codecov-action@v3.1.1
+  minimum:
+    name: minimum
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+    steps:
+    - name: Clone repo
+      uses: actions/checkout@v3.1.0
+    - name: Set up python
+      uses: actions/setup-python@v4.3.0
+      with:
+        python-version: '3.7'
+    - name: Install apt dependencies (Linux)
+      run: sudo apt-get install libgeos-dev libhdf5-dev unrar
     - name: Install pip dependencies
       run: |
-        pip install cython numpy  # needed for pycocotools
-        pip install .[datasets,tests]
+        pip install cython numpy==1.17.2  # needed by pycocotools
+        pip install -r requirements/min.old
+        pip list
     - name: Run pytest checks
       run: pytest --cov=torchgeo --cov-report=xml
     - name: Report coverage
-      uses: codecov/codecov-action@v2
+      uses: codecov/codecov-action@v3.1.1

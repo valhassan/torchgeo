@@ -11,14 +11,14 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from .geo import VisionDataset
+from .geo import NonGeoDataset
 from .utils import check_integrity, percentile_normalization
 
 
-class So2Sat(VisionDataset):
+class So2Sat(NonGeoDataset):
     """So2Sat dataset.
 
-    The `So2Sat <https://doi.org/10.1109/MGRS.2020.2964708>`_ dataset consists of
+    The `So2Sat <https://doi.org/10.1109/MGRS.2020.2964708>`__ dataset consists of
     corresponding synthetic aperture radar and multispectral optical image data
     acquired by the Sentinel-1 and Sentinel-2 remote sensing satellites, and a
     corresponding local climate zones (LCZ) label. The dataset is distributed over
@@ -105,22 +105,31 @@ class So2Sat(VisionDataset):
         "Water",
     ]
 
-    all_s1_band_names = ("S1B1", "S1B2", "S1B3", "S1B4", "S1B5", "S1B6", "S1B7", "S1B8")
+    all_s1_band_names = (
+        "S1_B1",
+        "S1_B2",
+        "S1_B3",
+        "S1_B4",
+        "S1_B5",
+        "S1_B6",
+        "S1_B7",
+        "S1_B8",
+    )
     all_s2_band_names = (
-        "B02",
-        "B03",
-        "B04",
-        "B05",
-        "B06",
-        "B07",
-        "B08",
-        "B08A",
-        "B11 SWIR",
-        "B12 SWIR",
+        "S2_B02",
+        "S2_B03",
+        "S2_B04",
+        "S2_B05",
+        "S2_B06",
+        "S2_B07",
+        "S2_B08",
+        "S2_B8A",
+        "S2_B11",
+        "S2_B12",
     )
     all_band_names = all_s1_band_names + all_s2_band_names
 
-    RGB_BANDS = ["B04", "B03", "B02"]
+    RGB_BANDS = ["S2_B04", "S2_B03", "S2_B02"]
 
     BAND_SETS = {
         "all": all_band_names,
@@ -150,6 +159,9 @@ class So2Sat(VisionDataset):
         Raises:
             AssertionError: if ``split`` argument is invalid
             RuntimeError: if data is not found in ``root``, or checksums don't match
+
+        .. versionadded:: 0.3
+           The *bands* parameter.
         """
         try:
             import h5py  # noqa: F401
@@ -194,7 +206,7 @@ class So2Sat(VisionDataset):
             raise RuntimeError("Dataset not found or corrupted.")
 
         with h5py.File(self.fn, "r") as f:
-            self.size = int(f["label"].shape[0])
+            self.size: int = f["label"].shape[0]
 
     def __getitem__(self, index: int) -> Dict[str, Tensor]:
         """Return an index within the dataset.
@@ -214,20 +226,15 @@ class So2Sat(VisionDataset):
             s2 = np.take(s2, indices=self.s2_band_indices, axis=2)
 
             # convert one-hot encoding to int64 then torch int
-            label = torch.tensor(  # type: ignore[attr-defined]
-                f["label"][index].argmax()
-            )
+            label = torch.tensor(f["label"][index].argmax())
 
             s1 = np.rollaxis(s1, 2, 0)  # convert to CxHxW format
             s2 = np.rollaxis(s2, 2, 0)  # convert to CxHxW format
 
-            s1 = torch.from_numpy(s1)  # type: ignore[attr-defined]
-            s2 = torch.from_numpy(s2)  # type: ignore[attr-defined]
+            s1 = torch.from_numpy(s1)
+            s2 = torch.from_numpy(s2)
 
-        sample = {
-            "image": torch.cat([s1, s2]),  # type: ignore[attr-defined]
-            "label": label,
-        }
+        sample = {"image": torch.cat([s1, s2]), "label": label}
 
         if self.transforms is not None:
             sample = self.transforms(sample)

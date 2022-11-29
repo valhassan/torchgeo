@@ -5,25 +5,27 @@
 
 import glob
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast, overload
 
 import fiona
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
 import torch
 from rasterio.enums import Resampling
 from torch import Tensor
+from torchvision.ops import clip_boxes_to_image, remove_small_boxes
 from torchvision.utils import draw_bounding_boxes
 
-from .geo import VisionDataset
+from .geo import NonGeoDataset
 from .utils import download_url, extract_archive
 
 
-class IDTReeS(VisionDataset):
+class IDTReeS(NonGeoDataset):
     """IDTReeS dataset.
 
-    The `IDTReeS <https://idtrees.org/competition/>`_
+    The `IDTReeS <https://idtrees.org/competition/>`__
     dataset is a dataset for tree crown detection.
 
     Dataset features:
@@ -202,7 +204,7 @@ class IDTReeS(VisionDataset):
             data and label at that index
         """
         path = self.images[index]
-        image = self._load_image(path).to(torch.uint8)  # type:ignore[attr-defined]
+        image = self._load_image(path).to(torch.uint8)
         hsi = self._load_image(path.replace("RGB", "HSI"))
         chm = self._load_image(path.replace("RGB", "CHM"))
         las = self._load_las(path.replace("RGB", "LAS").replace(".tif", ".las"))
@@ -211,9 +213,21 @@ class IDTReeS(VisionDataset):
         if self.split == "test":
             if self.task == "task2":
                 sample["boxes"] = self._load_boxes(path)
+                h, w = sample["image"].shape[1:]
+                sample["boxes"], _ = self._filter_boxes(
+                    image_size=(h, w), min_size=1, boxes=sample["boxes"], labels=None
+                )
         else:
             sample["boxes"] = self._load_boxes(path)
             sample["label"] = self._load_target(path)
+
+            h, w = sample["image"].shape[1:]
+            sample["boxes"], sample["label"] = self._filter_boxes(
+                image_size=(h, w),
+                min_size=1,
+                boxes=sample["boxes"],
+                labels=sample["label"],
+            )
 
         if self.transforms is not None:
             sample = self.transforms(sample)
@@ -239,7 +253,7 @@ class IDTReeS(VisionDataset):
         """
         with rasterio.open(path) as f:
             array = f.read(out_shape=self.image_size, resampling=Resampling.bilinear)
-        tensor: Tensor = torch.from_numpy(array)  # type: ignore[attr-defined]
+        tensor = torch.from_numpy(array)
         return tensor
 
     def _load_las(self, path: str) -> Tensor:
@@ -255,7 +269,7 @@ class IDTReeS(VisionDataset):
 
         las = laspy.read(path)
         array: "np.typing.NDArray[np.int_]" = np.stack([las.x, las.y, las.z], axis=0)
-        tensor: Tensor = torch.from_numpy(array)  # type: ignore[attr-defined]
+        tensor = torch.from_numpy(array)
         return tensor
 
     def _load_boxes(self, path: str) -> Tensor:
@@ -268,33 +282,38 @@ class IDTReeS(VisionDataset):
             the bounding boxes
         """
         base_path = os.path.basename(path)
+        geometries = cast(Dict[int, Dict[str, Any]], self.geometries)
 
         # Find object ids and geometries
+        # The train set geometry->image mapping is contained
+        # in the train/Field/itc_rsFile.csv file
         if self.split == "train":
             indices = self.labels["rsFile"] == base_path
             ids = self.labels[indices]["id"].tolist()
-            geoms = [self.geometries[i]["geometry"]["coordinates"][0][:4] for i in ids]
-        # Test set - Task 2 has no mapping csv. Mapping is inside of geometry
+            geoms = [geometries[i]["geometry"]["coordinates"][0][:4] for i in ids]
+        # The test set has no mapping csv. The mapping is inside of the geometry
+        # properties i.e. geom["property"]["plotID"] contains the RGB image filename
+        # Return all geometries with the matching RGB image filename of the sample
         else:
             ids = [
                 k
-                for k, v in self.geometries.items()
+                for k, v in geometries.items()
                 if v["properties"]["plotID"] == base_path
             ]
-            geoms = [self.geometries[i]["geometry"]["coordinates"][0][:4] for i in ids]
+            geoms = [geometries[i]["geometry"]["coordinates"][0][:4] for i in ids]
 
         # Convert to pixel coords
         boxes = []
         with rasterio.open(path) as f:
             for geom in geoms:
                 coords = [f.index(x, y) for x, y in geom]
-                xmin = min([coord[0] for coord in coords])
-                xmax = max([coord[0] for coord in coords])
-                ymin = min([coord[1] for coord in coords])
-                ymax = max([coord[1] for coord in coords])
+                xmin = min(coord[1] for coord in coords)
+                xmax = max(coord[1] for coord in coords)
+                ymin = min(coord[0] for coord in coords)
+                ymax = max(coord[0] for coord in coords)
                 boxes.append([xmin, ymin, xmax, ymax])
 
-        tensor: Tensor = torch.tensor(boxes)  # type: ignore[attr-defined]
+        tensor = torch.tensor(boxes)
         return tensor
 
     def _load_target(self, path: str) -> Tensor:
@@ -313,10 +332,12 @@ class IDTReeS(VisionDataset):
         # Load object labels
         classes = self.labels[indices]["taxonID"].tolist()
         labels = [self.class2idx[c] for c in classes]
-        tensor: Tensor = torch.tensor(labels)  # type: ignore[attr-defined]
+        tensor = torch.tensor(labels)
         return tensor
 
-    def _load(self, root: str) -> Tuple[List[str], Dict[int, Dict[str, Any]], Any]:
+    def _load(
+        self, root: str
+    ) -> Tuple[List[str], Optional[Dict[int, Dict[str, Any]]], Any]:
         """Load files, geometries, and labels.
 
         Args:
@@ -342,7 +363,7 @@ class IDTReeS(VisionDataset):
 
         images = glob.glob(os.path.join(directory, "RemoteSensing", "RGB", "*.tif"))
 
-        return images, geoms, labels  # type: ignore[return-value]
+        return images, geoms, labels
 
     def _load_labels(self, directory: str) -> Any:
         """Load the csv files containing the labels.
@@ -377,16 +398,58 @@ class IDTReeS(VisionDataset):
         """
         filepaths = glob.glob(os.path.join(directory, "ITC", "*.shp"))
 
+        i = 0
         features: Dict[int, Dict[str, Any]] = {}
         for path in filepaths:
             with fiona.open(path) as src:
-                for i, feature in enumerate(src):
+                for feature in src:
+                    # The train set has a unique id for each geometry in the properties
                     if self.split == "train":
                         features[feature["properties"]["id"]] = feature
-                    # Test set task 2 has no id
+                    # The test set has no unique id so create a dummy id
                     else:
                         features[i] = feature
+                        i += 1
         return features
+
+    @overload
+    def _filter_boxes(
+        self, image_size: Tuple[int, int], min_size: int, boxes: Tensor, labels: Tensor
+    ) -> Tuple[Tensor, Tensor]:
+        ...
+
+    @overload
+    def _filter_boxes(
+        self, image_size: Tuple[int, int], min_size: int, boxes: Tensor, labels: None
+    ) -> Tuple[Tensor, None]:
+        ...
+
+    def _filter_boxes(
+        self,
+        image_size: Tuple[int, int],
+        min_size: int,
+        boxes: Tensor,
+        labels: Optional[Tensor],
+    ) -> Tuple[Tensor, Optional[Tensor]]:
+        """Clip boxes to image size and filter boxes with sides less than ``min_size``.
+
+        Args:
+            image_size: tuple of (height, width) of image
+            min_size: filter boxes that have any side less than min_size
+            boxes: [N, 4] shape tensor of xyxy bounding box coordinates
+            labels: (Optional) [N,] shape tensor of bounding box labels
+
+        Returns:
+            a tuple of filtered boxes and labels
+        """
+        boxes = clip_boxes_to_image(boxes=boxes, size=image_size)
+        indices = remove_small_boxes(boxes=boxes, min_size=min_size)
+
+        boxes = boxes[indices]
+        if labels is not None:
+            labels = labels[indices]
+
+        return boxes, labels
 
     def _verify(self) -> None:
         """Verify the integrity of the dataset.
@@ -418,7 +481,7 @@ class IDTReeS(VisionDataset):
             raise RuntimeError(
                 "Dataset not found in `root` directory and `download=False`, "
                 "either specify a different `root` directory or use `download=True` "
-                "to automaticaly download the dataset."
+                "to automatically download the dataset."
             )
 
         # Download and extract the dataset
@@ -456,7 +519,7 @@ class IDTReeS(VisionDataset):
         hsi = normalize(sample["hsi"][hsi_indices, :, :]).permute((1, 2, 0)).numpy()
         chm = normalize(sample["chm"]).permute((1, 2, 0)).numpy()
 
-        if "boxes" in sample:
+        if "boxes" in sample and len(sample["boxes"]):
             labels = (
                 [self.idx2class[int(i)] for i in sample["label"]]
                 if "label" in sample
@@ -469,7 +532,7 @@ class IDTReeS(VisionDataset):
         else:
             image = sample["image"].permute((1, 2, 0)).numpy()
 
-        if "prediction_boxes" in sample:
+        if "prediction_boxes" in sample and len(sample["prediction_boxes"]):
             ncols += 1
             labels = (
                 [self.idx2class[int(i)] for i in sample["prediction_label"]]
@@ -534,7 +597,10 @@ class IDTReeS(VisionDataset):
         ).transpose((1, 0))
 
         if colormap:
-            cm = plt.cm.get_cmap(colormap)
+            if hasattr(mpl, "colormaps"):
+                cm = mpl.colormaps[colormap]
+            else:
+                cm = plt.cm.get_cmap(colormap)
             norm = plt.Normalize()
             colors = cm(norm(points[:, 2]))[:, :3]
         else:

@@ -3,13 +3,17 @@
 
 """Common datamodule utilities."""
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
-from torch.utils.data import Dataset, Subset, random_split
+from torch.utils.data import Subset, TensorDataset, random_split
+
+from ..datasets import NonGeoDataset
 
 
 def dataset_split(
-    dataset: Dataset[Any], val_pct: float, test_pct: Optional[float] = None
+    dataset: Union[TensorDataset, NonGeoDataset],
+    val_pct: float,
+    test_pct: Optional[float] = None,
 ) -> List[Subset[Any]]:
     """Split a torch Dataset into train/val/test sets.
 
@@ -24,11 +28,11 @@ def dataset_split(
         a list of the subset datasets. Either [train, val] or [train, val, test]
     """
     if test_pct is None:
-        val_length = int(len(dataset) * val_pct)
+        val_length = round(len(dataset) * val_pct)
         train_length = len(dataset) - val_length
         return random_split(dataset, [train_length, val_length])
     else:
-        val_length = int(len(dataset) * val_pct)
-        test_length = int(len(dataset) * test_pct)
+        val_length = round(len(dataset) * val_pct)
+        test_length = round(len(dataset) * test_pct)
         train_length = len(dataset) - (val_length + test_length)
         return random_split(dataset, [train_length, val_length, test_length])

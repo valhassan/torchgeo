@@ -4,16 +4,15 @@
 """TorchGeo samplers."""
 
 import abc
-import random
-import warnings
-from typing import Iterator, Optional, Tuple, Union
+from typing import Callable, Iterable, Iterator, Optional, Tuple, Union
 
+import torch
 from rtree.index import Index, Property
 from torch.utils.data import Sampler
 
 from ..datasets import BoundingBox, GeoDataset
 from .constants import Units
-from .utils import _to_tuple, get_random_bounding_box
+from .utils import _to_tuple, get_random_bounding_box, tile_to_chips
 
 # https://github.com/pytorch/pytorch/issues/60979
 # https://github.com/pytorch/pytorch/pull/61045
@@ -63,7 +62,8 @@ class RandomGeoSampler(GeoSampler):
     """Samples elements from a region of interest randomly.
 
     This is particularly useful during training when you want to maximize the size of
-    the dataset and return as many random :term:`chips <chip>` as possible.
+    the dataset and return as many random :term:`chips <chip>` as possible. Note that
+    randomly sampled chips may overlap.
 
     This sampler is not recommended for use with tile-based datasets. Use
     :class:`RandomBatchGeoSampler` instead.
@@ -73,7 +73,7 @@ class RandomGeoSampler(GeoSampler):
         self,
         dataset: GeoDataset,
         size: Union[Tuple[float, float], float],
-        length: int,
+        length: Optional[int],
         roi: Optional[BoundingBox] = None,
         units: Units = Units.PIXELS,
     ) -> None:
@@ -90,12 +90,18 @@ class RandomGeoSampler(GeoSampler):
             dataset: dataset to index from
             size: dimensions of each :term:`patch`
             length: number of random samples to draw per epoch
+                (defaults to approximately the maximal number of non-overlapping
+                :term:`chips <chip>` of size ``size`` that could be sampled from
+                the dataset)
             roi: region of interest to sample from (minx, maxx, miny, maxy, mint, maxt)
                 (defaults to the bounds of ``dataset.index``)
             units: defines if ``size`` is in pixel or CRS units
 
         .. versionchanged:: 0.3
            Added ``units`` parameter, changed default to pixel units
+
+        .. versionchanged:: 0.4
+           ``length`` parameter is now optional, a reasonable default will be used
         """
         super().__init__(dataset, roi)
         self.size = _to_tuple(size)
@@ -103,15 +109,29 @@ class RandomGeoSampler(GeoSampler):
         if units == Units.PIXELS:
             self.size = (self.size[0] * self.res, self.size[1] * self.res)
 
-        self.length = length
+        self.length = 0
         self.hits = []
+        areas = []
         for hit in self.index.intersection(tuple(self.roi), objects=True):
             bounds = BoundingBox(*hit.bounds)
             if (
-                bounds.maxx - bounds.minx > self.size[1]
-                and bounds.maxy - bounds.miny > self.size[0]
+                bounds.maxx - bounds.minx >= self.size[1]
+                and bounds.maxy - bounds.miny >= self.size[0]
             ):
+                if bounds.area > 0:
+                    rows, cols = tile_to_chips(bounds, self.size)
+                    self.length += rows * cols
+                else:
+                    self.length += 1
                 self.hits.append(hit)
+                areas.append(bounds.area)
+        if length is not None:
+            self.length = length
+
+        # torch.multinomial requires float probabilities > 0
+        self.areas = torch.tensor(areas, dtype=torch.float)
+        if torch.sum(self.areas) == 0:
+            self.areas += 1
 
     def __iter__(self) -> Iterator[BoundingBox]:
         """Return the index of a dataset.
@@ -120,8 +140,9 @@ class RandomGeoSampler(GeoSampler):
             (minx, maxx, miny, maxy, mint, maxt) coordinates to index a dataset
         """
         for _ in range(len(self)):
-            # Choose a random tile
-            hit = random.choice(self.hits)
+            # Choose a random tile, weighted by area
+            idx = torch.multinomial(self.areas, 1)
+            hit = self.hits[idx]
             bounds = BoundingBox(*hit.bounds)
 
             # Choose a random index within that tile
@@ -151,6 +172,9 @@ class GridGeoSampler(GeoSampler):
     The overlap between each chip (``chip_size - stride``) should be approximately equal
     to the `receptive field <https://distill.pub/2019/computing-receptive-fields/>`_ of
     the CNN.
+
+    Note that the stride of the final set of chips in each row/column may be adjusted so
+    that the entire :term:`tile` is sampled without exceeding the bounds of the dataset.
     """
 
     def __init__(
@@ -193,17 +217,15 @@ class GridGeoSampler(GeoSampler):
         for hit in self.index.intersection(tuple(self.roi), objects=True):
             bounds = BoundingBox(*hit.bounds)
             if (
-                bounds.maxx - bounds.minx > self.size[1]
-                and bounds.maxy - bounds.miny > self.size[0]
+                bounds.maxx - bounds.minx >= self.size[1]
+                and bounds.maxy - bounds.miny >= self.size[0]
             ):
                 self.hits.append(hit)
 
-        self.length: int = 0
+        self.length = 0
         for hit in self.hits:
             bounds = BoundingBox(*hit.bounds)
-
-            rows = int((bounds.maxy - bounds.miny - self.size[0]) // self.stride[0]) + 1
-            cols = int((bounds.maxx - bounds.minx - self.size[1]) // self.stride[1]) + 1
+            rows, cols = tile_to_chips(bounds, self.size, self.stride)
             self.length += rows * cols
 
     def __iter__(self) -> Iterator[BoundingBox]:
@@ -215,10 +237,7 @@ class GridGeoSampler(GeoSampler):
         # For each tile...
         for hit in self.hits:
             bounds = BoundingBox(*hit.bounds)
-
-            rows = int((bounds.maxy - bounds.miny - self.size[0]) // self.stride[0]) + 1
-            cols = int((bounds.maxx - bounds.minx - self.size[1]) // self.stride[1]) + 1
-
+            rows, cols = tile_to_chips(bounds, self.size, self.stride)
             mint = bounds.mint
             maxt = bounds.maxt
 
@@ -226,11 +245,17 @@ class GridGeoSampler(GeoSampler):
             for i in range(rows):
                 miny = bounds.miny + i * self.stride[0]
                 maxy = miny + self.size[0]
+                if maxy > bounds.maxy:
+                    maxy = bounds.maxy
+                    miny = bounds.maxy - self.size[0]
 
                 # For each column...
                 for j in range(cols):
                     minx = bounds.minx + j * self.stride[1]
                     maxx = minx + self.size[1]
+                    if maxx > bounds.maxx:
+                        maxx = bounds.maxx
+                        minx = bounds.maxx - self.size[1]
 
                     yield BoundingBox(minx, maxx, miny, maxy, mint, maxt)
 
@@ -243,101 +268,60 @@ class GridGeoSampler(GeoSampler):
         return self.length
 
 
-class GridGeoSamplerPlus(GridGeoSampler):
-    def __init__(  # TODO: remove when issue #431 is solved
+class PreChippedGeoSampler(GeoSampler):
+    """Samples entire files at a time.
+
+    This is particularly useful for datasets that contain geospatial metadata
+    and subclass :class:`~torchgeo.datasets.GeoDataset` but have already been
+    pre-processed into :term:`chips <chip>`.
+
+    This sampler should not be used with :class:`~torchgeo.datasets.NonGeoDataset`.
+    You may encounter problems when using an :term:`ROI <region of interest (ROI)>`
+    that partially intersects with one of the file bounding boxes, when using an
+    :class:`~torchgeo.datasets.IntersectionDataset`, or when each file is in a
+    different CRS. These issues can be solved by adding padding.
+    """
+
+    def __init__(
         self,
         dataset: GeoDataset,
-        size: Union[Tuple[float, float], float],
-        stride: Union[Tuple[float, float], float],
         roi: Optional[BoundingBox] = None,
-        units: Units = Units.PIXELS,
+        shuffle: bool = False,
     ) -> None:
         """Initialize a new Sampler instance.
 
-        The ``size`` and ``stride`` arguments can either be:
-
-        * a single ``float`` - in which case the same value is used for the height and
-          width dimension
-        * a ``tuple`` of two floats - in which case, the first *float* is used for the
-          height dimension, and the second *float* for the width dimension
-
         Args:
             dataset: dataset to index from
-            size: dimensions of each :term:`patch`
-            stride: distance to skip between each patch
             roi: region of interest to sample from (minx, maxx, miny, maxy, mint, maxt)
                 (defaults to the bounds of ``dataset.index``)
-            units: defines if ``size`` and ``stride`` are in pixel or CRS units
+            shuffle: if True, reshuffle data at every epoch
 
-        .. versionchanged:: 0.3
-           Added ``units`` parameter, changed default to pixel units
+        .. versionadded:: 0.3
         """
-        super().__init__(dataset=dataset, roi=roi, stride=stride, size=size)
-        self.size = _to_tuple(size)
-        self.stride = _to_tuple(stride)
-
-        if units == Units.PIXELS:
-            self.size = (self.size[0] * self.res, self.size[1] * self.res)
-            self.stride = (self.stride[0] * self.res, self.stride[1] * self.res)
+        super().__init__(dataset, roi)
+        self.shuffle = shuffle
 
         self.hits = []
         for hit in self.index.intersection(tuple(self.roi), objects=True):
-            bounds = BoundingBox(*hit.bounds)
-            if (
-                bounds.maxx - bounds.minx > self.size[1]
-                and bounds.maxy - bounds.miny > self.size[0]
-            ):
-                self.hits.append(hit)
+            self.hits.append(hit)
 
-        self.length: int = 0
-        for hit in self.hits:
-            bounds = BoundingBox(*hit.bounds)
-
-            rows = int((bounds.maxy - bounds.miny - self.size[0] + self.stride[0]) // self.stride[0]) + 1
-            cols = int((bounds.maxx - bounds.minx - self.size[1] + self.stride[1]) // self.stride[1]) + 1
-            self.length += rows * cols
-
-    def __iter__(self) -> Iterator[BoundingBox]:  # TODO: remove when issue #431 is solved
+    def __iter__(self) -> Iterator[BoundingBox]:
         """Return the index of a dataset.
 
         Returns:
             (minx, maxx, miny, maxy, mint, maxt) coordinates to index a dataset
         """
-        # For each tile...
-        for hit in self.hits:
-            bounds = BoundingBox(*hit.bounds)
+        generator: Callable[[int], Iterable[int]] = range
+        if self.shuffle:
+            generator = torch.randperm
 
-            rows = int((bounds.maxy - bounds.miny - self.size[0] + self.stride[0]) // self.stride[0]) + 1
-            cols = int((bounds.maxx - bounds.minx - self.size[1] + self.stride[1]) // self.stride[1]) + 1
+        for idx in generator(len(self)):
+            yield BoundingBox(*self.hits[idx].bounds)
 
-            mint = bounds.mint
-            maxt = bounds.maxt
+    def __len__(self) -> int:
+        """Return the number of samples over the ROI.
 
-            for i in range(rows):
-                miny = bounds.miny + i * self.stride[0]
-                maxy = miny + self.size[0]
-                if maxy > bounds.maxy:
-                    last_stride_y = self.stride[0] - (miny - (bounds.maxy - self.size[0]))
-                    maxy = bounds.maxy
-                    miny = bounds.maxy - self.size[0]
-                    warnings.warn(
-                        f"Max y coordinate of bounding box reaches passed y bounds of source tile. "
-                        f"Bounding box will be moved to set max y at source tile's max y. Stride will be adjusted "
-                        f"from {self.stride[0]:.2f} to {last_stride_y:.2f}"
-                    )
-
-                # For each column...
-                for j in range(cols):
-                    minx = bounds.minx + j * self.stride[1]
-                    maxx = minx + self.size[1]
-                    if maxx > bounds.maxx:
-                        last_stride_x = self.stride[1] - (minx - (bounds.maxx - self.size[1]))
-                        maxx = bounds.maxx
-                        minx = bounds.maxx - self.size[1]
-                        warnings.warn(
-                            f"Max x coordinate of bounding box reaches passed x bounds of source tile. "
-                            f"Bounding box will be moved to set max x at source tile's max x. Stride will be adjusted "
-                            f"from {self.stride[1]:.2f} to {last_stride_x:.2f}"
-                        )
-
-                    yield BoundingBox(minx, maxx, miny, maxy, mint, maxt)
+        Returns:
+            number of patches that will be sampled
+        """
+        return len(self.hits)

@@ -3,15 +3,24 @@
 
 """Segmentation tasks."""
 
+import warnings
 from typing import Any, Dict, cast
 
+import matplotlib.pyplot as plt
+import pytorch_lightning as pl
+import segmentation_models_pytorch as smp
 import torch
 from hydra.utils import instantiate
 from pytorch_lightning.core.lightning import LightningModule
+import torch.nn as nn
 from torch import Tensor
 from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
 from torch.utils.data import DataLoader
-from torchmetrics import Accuracy, JaccardIndex, MetricCollection
+from torchmetrics import MetricCollection, JaccardIndex
+from torchmetrics.classification import (  # type: ignore[attr-defined]
+    MulticlassAccuracy,
+    MulticlassJaccardIndex,
+)
 
 from ..datasets.utils import unbind_samples
 
@@ -24,8 +33,14 @@ from ..utils import get_logger
 logging = get_logger(__name__)
 
 
-class SemanticSegmentationTask(LightningModule):
-    """LightningModule for semantic segmentation of images."""
+class SemanticSegmentationTask(pl.LightningModule):
+    """LightningModule for semantic segmentation of images.
+
+    Supports `Segmentation Models Pytorch
+    <https://github.com/qubvel/segmentation_models.pytorch>`_
+    as an architecture choice in combination with any of these
+    `TIMM encoders <https://smp.readthedocs.io/en/latest/encoders_timm.html>`_.
+    """
 
     def config_task(self) -> None:
         """Configures the task based on kwargs parameters passed to the constructor."""
@@ -43,27 +58,44 @@ class SemanticSegmentationTask(LightningModule):
             in_channels: Number of channels in input image
             num_classes: Number of semantic classes to predict
             loss: Name of the loss function
-            ignore_zeros: Whether to ignore the "0" class value in the loss and metrics
+            ignore_index: Optional integer class index to ignore in the loss and metrics
+            learning_rate: Learning rate for optimizer
+            learning_rate_schedule_patience: Patience for learning rate scheduler
 
         Raises:
             ValueError: if kwargs arguments are invalid
+
+        .. versionchanged:: 0.3
+           The *ignore_zeros* parameter was renamed to *ignore_index*.
         """
         super().__init__()
-        self.save_hyperparameters()  # creates `self.hparams` from kwargs
 
         self.ignore_zeros = None if self.hparams["loss"]["ignore_index"] else 0
 
+        # Creates `self.hparams` from kwargs
+        #self.save_hyperparameters()  # type: ignore[operator]
+        #self.hyperparams = cast(Dict[str, Any], self.hparams)
+
+        if not isinstance(kwargs["ignore_index"], (int, type(None))):
+            raise ValueError("ignore_index must be an int or None")
+        if (kwargs["ignore_index"] is not None) and (kwargs["loss"] == "jaccard"):
+            warnings.warn(
+                "ignore_index has no effect on training when loss='jaccard'",
+                UserWarning,
+            )
+        self.ignore_index = kwargs["ignore_index"]
         self.config_task()
 
         self.train_metrics = MetricCollection(
             [
-                Accuracy(
-                    num_classes=self.hparams["model"]["classes"],
-                    ignore_index=self.hparams["loss"]["ignore_index"],
+                MulticlassAccuracy(
+                    num_classes=self.hyperparams["num_classes"],
+                    ignore_index=self.ignore_index,
+                    mdmc_average="global",
                 ),
-                JaccardIndex(
-                    num_classes=self.hparams["model"]["classes"],
-                    ignore_index=self.hparams["loss"]["ignore_index"],
+                MulticlassJaccardIndex(
+                    num_classes=self.hyperparams["num_classes"],
+                    ignore_index=self.ignore_index,
                 ),
             ],
             prefix="train_",
@@ -71,7 +103,7 @@ class SemanticSegmentationTask(LightningModule):
         self.val_metrics = self.train_metrics.clone(prefix="val_")
         self.test_metrics = self.train_metrics.clone(prefix="test_")
 
-    def forward(self, x: Tensor) -> Any:  # type: ignore[override]
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
         """Forward pass of the model.
 
         Args:
@@ -80,23 +112,21 @@ class SemanticSegmentationTask(LightningModule):
         Returns:
             output from the model
         """
-        return self.model(x)
+        return self.model(*args, **kwargs)
 
-    def training_step(  # type: ignore[override]
-        self, batch: Dict[str, Any], batch_idx: int
-    ) -> Tensor:
-        """Training step - reports average accuracy and average JaccardIndex.
+    def training_step(self, *args: Any, **kwargs: Any) -> Tensor:
+        """Compute and return the training loss.
 
         Args:
-            batch: Current batch
-            batch_idx: Index of current batch
+            batch: the output of your DataLoader
 
         Returns:
             training loss
         """
+        batch = args[0]
         x = batch["image"]
         y = batch["mask"]
-        y_hat = self.forward(x)
+        y_hat = self(x)
         y_hat_hard = y_hat.argmax(dim=1)
 
         loss = self.loss(y_hat, y)
@@ -117,21 +147,18 @@ class SemanticSegmentationTask(LightningModule):
         self.log_dict(self.train_metrics.compute())
         self.train_metrics.reset()
 
-    def validation_step(  # type: ignore[override]
-        self, batch: Dict[str, Any], batch_idx: int
-    ) -> None:
-        """Validation step - reports average accuracy and average JaccardIndex.
-
-        Logs the first 10 validation samples to tensorboard as images with 3 subplots
-        showing the image, mask, and predictions.
+    def validation_step(self, *args: Any, **kwargs: Any) -> None:
+        """Compute validation loss and log example predictions.
 
         Args:
-            batch: Current batch
-            batch_idx: Index of current batch
+            batch: the output of your DataLoader
+            batch_idx: the index of this batch
         """
+        batch = args[0]
+        batch_idx = args[1]
         x = batch["image"]
         y = batch["mask"]
-        y_hat = self.forward(x)
+        y_hat = self(x)
         y_hat_hard = y_hat.argmax(dim=1)
 
         loss = self.loss(y_hat, y)
@@ -147,10 +174,11 @@ class SemanticSegmentationTask(LightningModule):
                     batch[key] = batch[key].cpu()
                 sample = unbind_samples(batch)[0]
                 fig = datamodule.plot(sample)
-                summary_writer = self.logger.experiment
+                summary_writer = self.logger.experiment  # type: ignore[union-attr]
                 summary_writer.add_figure(
                     f"image/{batch_idx}", fig, global_step=self.global_step
                 )
+                plt.close()
             except AttributeError:
                 pass
 
@@ -163,18 +191,16 @@ class SemanticSegmentationTask(LightningModule):
         self.log_dict(self.val_metrics.compute())
         self.val_metrics.reset()
 
-    def test_step(  # type: ignore[override]
-        self, batch: Dict[str, Any], batch_idx: int
-    ) -> None:
-        """Test step identical to the validation step.
+    def test_step(self, *args: Any, **kwargs: Any) -> None:
+        """Compute test loss.
 
         Args:
-            batch: Current batch
-            batch_idx: Index of current batch
+            batch: the output of your DataLoader
         """
+        batch = args[0]
         x = batch["image"]
         y = batch["mask"]
-        y_hat = self.forward(x)
+        y_hat = self(x)
         y_hat_hard = y_hat.argmax(dim=1)
 
         loss = self.loss(y_hat, y)
@@ -204,7 +230,8 @@ class SemanticSegmentationTask(LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": ReduceLROnPlateau(
-                    optimizer, patience=self.hparams["learning_rate_schedule_patience"]
+                    optimizer,
+                    patience=self.hyperparams["learning_rate_schedule_patience"],
                 ),
                 "monitor": "val_loss",
             },

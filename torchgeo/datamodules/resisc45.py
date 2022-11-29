@@ -25,28 +25,24 @@ class RESISC45DataModule(pl.LightningDataModule):
     Uses the train/val/test splits from the dataset.
     """
 
-    band_means = torch.tensor(  # type: ignore[attr-defined]
-        [0.36820969, 0.38083247, 0.34341029]
-    )
-
-    band_stds = torch.tensor(  # type: ignore[attr-defined]
-        [0.20339924, 0.18524736, 0.18455448]
-    )
+    band_means = torch.tensor([0.36820969, 0.38083247, 0.34341029])
+    band_stds = torch.tensor([0.20339924, 0.18524736, 0.18455448])
 
     def __init__(
-        self, root_dir: str, batch_size: int = 64, num_workers: int = 0, **kwargs: Any
+        self, batch_size: int = 64, num_workers: int = 0, **kwargs: Any
     ) -> None:
         """Initialize a LightningDataModule for RESISC45 based DataLoaders.
 
         Args:
-            root_dir: The ``root`` arugment to pass to the RESISC45 Dataset classes
             batch_size: The batch size to use in all created DataLoaders
             num_workers: The number of workers to use in all created DataLoaders
+            **kwargs: Additional keyword arguments passed to
+                :class:`~torchgeo.datasets.RESISC45`
         """
-        super().__init__()  # type: ignore[no-untyped-call]
-        self.root_dir = root_dir
+        super().__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.kwargs = kwargs
 
         self.norm = Normalize(self.band_means, self.band_stds)
 
@@ -64,8 +60,9 @@ class RESISC45DataModule(pl.LightningDataModule):
         """
         if (
             hasattr(self, "trainer")
+            and self.trainer is not None
             and hasattr(self.trainer, "training")
-            and self.trainer.training  # type: ignore[union-attr]
+            and self.trainer.training
         ):
             x = batch["image"]
 
@@ -76,7 +73,12 @@ class RESISC45DataModule(pl.LightningDataModule):
                 K.RandomSharpness(p=0.5),
                 K.RandomErasing(p=0.1),
                 K.ColorJitter(
-                    p=0.5, brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1
+                    p=0.5,
+                    brightness=0.1,
+                    contrast=0.1,
+                    saturation=0.1,
+                    hue=0.1,
+                    silence_instantiation_warning=True,
                 ),
                 data_keys=["input"],
             )
@@ -105,7 +107,7 @@ class RESISC45DataModule(pl.LightningDataModule):
 
         This method is only called once per run.
         """
-        RESISC45(self.root_dir, checksum=False)
+        RESISC45(**self.kwargs)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Initialize the main ``Dataset`` objects.
@@ -117,9 +119,11 @@ class RESISC45DataModule(pl.LightningDataModule):
         """
         transforms = Compose([self.preprocess])
 
-        self.train_dataset = RESISC45(self.root_dir, "train", transforms=transforms)
-        self.val_dataset = RESISC45(self.root_dir, "val", transforms=transforms)
-        self.test_dataset = RESISC45(self.root_dir, "test", transforms=transforms)
+        self.train_dataset = RESISC45(
+            split="train", transforms=transforms, **self.kwargs
+        )
+        self.val_dataset = RESISC45(split="val", transforms=transforms, **self.kwargs)
+        self.test_dataset = RESISC45(split="test", transforms=transforms, **self.kwargs)
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Return a DataLoader for training.

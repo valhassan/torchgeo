@@ -11,10 +11,10 @@ experiment:
     in_channels: 4
     num_classes: 7
     num_filters: 1
-    ignore_zeros: False
-    imagenet_pretraining: False
+    ignore_index: null
+    imagenet_pretraining: True
   datamodule:
-    root_dir: "tests/data/chesapeake/cvpr"
+    root: "tests/data/chesapeake/cvpr"
     train_splits:
     - "de-test"
     val_splits:

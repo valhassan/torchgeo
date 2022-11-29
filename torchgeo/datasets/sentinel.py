@@ -8,7 +8,6 @@ from typing import Any, Callable, Dict, Optional, Sequence
 import matplotlib.pyplot as plt
 import torch
 from rasterio.crs import CRS
-from torch import Tensor
 
 from .geo import RasterDataset
 
@@ -16,7 +15,7 @@ from .geo import RasterDataset
 class Sentinel(RasterDataset):
     """Abstract base class for all Sentinel datasets.
 
-    `Sentinel <https://sentinel.esa.int/web/sentinel/home>`_ is a family of
+    `Sentinel <https://sentinel.esa.int/web/sentinel/home>`__ is a family of
     satellites launched by the `European Space Agency (ESA) <https://www.esa.int/>`_
     under the `Copernicus Programme <https://www.copernicus.eu/en>`_.
 
@@ -39,16 +38,14 @@ class Sentinel2(Sentinel):
     Earth's surface changes.
     """
 
-    # TODO: files downloaded from USGS Earth Explorer seem to have a different
-    # filename format than the official documentation
     # https://sentinels.copernicus.eu/web/sentinel/user-guides/sentinel-2-msi/naming-convention
     # https://sentinel.esa.int/documents/247904/685211/Sentinel-2-MSI-L2A-Product-Format-Specifications.pdf
-    filename_glob = "T*_*_B02_*m.*"
+    filename_glob = "T*_*_{}*.*"
     filename_regex = r"""
-        ^T(?P<tile>\d{2}[A-Z]{3})
-        _(?P<date>\d{8}T\d{6})
+        ^T(?P<tile>\d{{2}}[A-Z]{{3}})
+        _(?P<date>\d{{8}}T\d{{6}})
         _(?P<band>B[018][\dA])
-        _(?P<resolution>\d{2}m)
+        (?:_(?P<resolution>{}m))?
         \..*$
     """
     date_format = "%Y%m%dT%H%M%S"
@@ -77,8 +74,8 @@ class Sentinel2(Sentinel):
         self,
         root: str = "data",
         crs: Optional[CRS] = None,
-        res: Optional[float] = None,
-        bands: Sequence[str] = [],
+        res: float = 10,
+        bands: Optional[Sequence[str]] = None,
         transforms: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
         cache: bool = True,
     ) -> None:
@@ -98,13 +95,15 @@ class Sentinel2(Sentinel):
         Raises:
             FileNotFoundError: if no files are found in ``root``
         """
-        self.bands = bands if bands else self.all_bands
+        bands = bands or self.all_bands
+        self.filename_glob = self.filename_glob.format(bands[0])
+        self.filename_regex = self.filename_regex.format(res)
 
-        super().__init__(root, crs, res, transforms, cache)
+        super().__init__(root, crs, res, bands, transforms, cache)
 
-    def plot(  # type: ignore[override]
+    def plot(
         self,
-        sample: Dict[str, Tensor],
+        sample: Dict[str, Any],
         show_titles: bool = True,
         suptitle: Optional[str] = None,
     ) -> plt.Figure:
@@ -121,7 +120,9 @@ class Sentinel2(Sentinel):
         Raises:
             ValueError: if the RGB bands are not included in ``self.bands``
 
-        .. versionadded:: 0.3
+        .. versionchanged:: 0.3
+           Method now takes a sample dict, not a Tensor. Additionally, possible to
+           show subplot titles and/or use a custom suptitle.
         """
         rgb_indices = []
         for band in self.RGB_BANDS:
@@ -131,7 +132,7 @@ class Sentinel2(Sentinel):
                 raise ValueError("Dataset doesn't contain some of the RGB bands")
 
         image = sample["image"][rgb_indices].permute(1, 2, 0)
-        image = torch.clamp(image / 3000, min=0, max=1)  # type: ignore[attr-defined]
+        image = torch.clamp(image / 2000, min=0, max=1)
 
         fig, ax = plt.subplots(1, 1, figsize=(4, 4))
 

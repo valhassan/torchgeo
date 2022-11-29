@@ -11,9 +11,9 @@ experiment:
     learning_rate_schedule_patience: 2
     in_channels: 2
     num_classes: 11
-    ignore_zeros: False
+    ignore_index: null
   datamodule:
-    root_dir: "tests/data/sen12ms"
+    root: "tests/data/sen12ms"
     band_set: "s1"
     batch_size: 1
     num_workers: 0

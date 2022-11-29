@@ -5,14 +5,12 @@
 
 import hashlib
 import os
-import random
 import zipfile
 
 import numpy as np
 import rasterio
 
 np.random.seed(0)
-random.seed(0)
 
 SIZE = 64
 
@@ -38,14 +36,14 @@ def create_file(path: str, dtype: str, num_channels: int) -> None:
     Z = np.random.randint(
         np.iinfo(profile["dtype"]).max, size=(1, SIZE, SIZE), dtype=profile["dtype"]
     )
-    src = rasterio.open(path, "w", **profile)
-    src.write(Z)
+    with rasterio.open(path, "w", **profile) as src:
+        src.write(Z)
 
 
 if __name__ == "__main__":
 
     for measurement, file_paths in files.items():
-        zipfilename = "N00E020_{}.zip".format(measurement)
+        zipfilename = f"N00E020_{measurement}.zip"
         files_to_zip = []
         for path in file_paths:
             # remove old data

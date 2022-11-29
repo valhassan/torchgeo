@@ -9,16 +9,24 @@ import argparse
 import csv
 import os
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, Union, cast
 
 import numpy as np
 import pytorch_lightning as pl
 import rasterio
 import torch
-from torchmetrics import Accuracy, JaccardIndex, Metric, MetricCollection
+from torchmetrics import MetricCollection
+from torchmetrics.classification import (  # type: ignore[attr-defined]
+    BinaryAccuracy,
+    BinaryJaccardIndex,
+)
 
-from torchgeo.trainers import ClassificationTask, SemanticSegmentationTask
 from torchgeo.trainers.segmentation import BinarySemanticSegmentationTask
+from torchgeo.trainers import (
+    ClassificationTask,
+    ObjectDetectionTask,
+    SemanticSegmentationTask,
+)
 from train import TASK_TO_MODULES_MAPPING
 
 
@@ -83,7 +91,7 @@ def set_up_parser() -> argparse.ArgumentParser:
         "--gpu", default=0, type=int, help="GPU ID to use", metavar="ID"
     )
     parser.add_argument(
-        "--root-dir",
+        "--root",
         required=True,
         type=str,
         help="root directory of the dataset for the accompanying task",
@@ -127,60 +135,6 @@ def set_up_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_eval_loop(
-    model: pl.LightningModule,
-    dataloader: Any,
-    device: torch.device,  # type: ignore[name-defined]
-    metrics: Metric,
-    root_dir = None,
-) -> Any:
-    """Runs a standard test loop over a dataloader and records metrics.
-
-    Args:
-        model: the model used for inference
-        dataloader: the dataloader to get samples from
-        device: the device to put data on
-        metrics: a torchmetrics compatible Metric to score the output from the model
-
-    Returns:
-        the result of ``metric.compute()``
-    """
-    for index, batch in enumerate(dataloader):
-        x = batch["image"].to(device)
-        if "mask" in batch:
-            y = batch["mask"].to(device)
-        elif "label" in batch:
-            y = batch["label"].to(device)
-        with torch.inference_mode():
-            y_pred = model(x)
-        metrics(y_pred, y)
-
-        for i in range(y_pred.shape[0]):
-            single_pred = y_pred[i]
-            #single_label = y[i]
-            single_pred = torch.sigmoid(input=single_pred).squeeze() * 255
-            single_pred = single_pred.cpu().numpy()
-            if root_dir:
-                # save to raster
-                out_dir = Path(root_dir) / batch["aoi_id"][i]
-                out_dir.mkdir(exist_ok=True)
-                out_file = out_dir / f"{Path(batch['image_path'][i]).stem}_inference.tif"
-                create_new_raster_from_base(batch["image_path"][i], out_file, single_pred)
-
-            # visualize with matplotlib
-            # fig, (axpred, axlabel) = plt.subplots(1, 2, figsize=(14, 7))
-            # axpred.imshow(single_pred.squeeze())
-            # axlabel.imshow(single_label.squeeze())
-            # plt.axis("off")
-            # #plt.show()
-            # plt.savefig(f"C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\MB13\\rebirth\\MB13_{index}_{i}.png")
-            # plt.close()
-            # print(f"C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\MB13\\rebirth\\MB13_{index}_{i}.png")
-    results = metrics.compute()
-    metrics.reset()
-    return results
-
-
 def main(args: argparse.Namespace) -> None:
     """High-level pipeline.
 
@@ -190,19 +144,20 @@ def main(args: argparse.Namespace) -> None:
         args: command-line arguments
     """
     assert os.path.exists(args.input_checkpoint)
-    assert os.path.exists(args.root_dir)
+    assert os.path.exists(args.root)
     TASK = TASK_TO_MODULES_MAPPING[args.task][0]
     DATAMODULE = TASK_TO_MODULES_MAPPING[args.task][1]
 
     # Loads the saved model from checkpoint based on the `args.task` name that was
     # passed as input
     model = TASK.load_from_checkpoint(args.input_checkpoint)
+    model = cast(pl.LightningModule, model)
     model.freeze()
     model.eval()
 
     dm = DATAMODULE(  # type: ignore[call-arg]
         seed=args.seed,
-        root_dir=args.root_dir,
+        root=args.root,
         num_workers=args.num_workers,
         batch_size=args.batch_size,
         # FIXME: necessary for ccmeo, chesapeake, ...
@@ -210,45 +165,68 @@ def main(args: argparse.Namespace) -> None:
         val_splits=[],
         test_splits=[args.test_split],
     )
-    dm.setup()
+    dm.setup("validate")
 
     # Record model hyperparameters
+    hparams = cast(Dict[str, Union[str, float]], model.hparams)
     if issubclass(TASK, ClassificationTask):
-        val_row: Dict[str, Union[str, float]] = {
+        val_row = {
             "split": "val",
-            "classification_model": model.hparams["classification_model"],
-            "learning_rate": model.hparams["learning_rate"],
-            "weights": model.hparams["weights"],
-            "loss": model.hparams["loss"],
+            "classification_model": hparams["classification_model"],
+            "learning_rate": hparams["learning_rate"],
+            "weights": hparams["weights"],
+            "loss": hparams["loss"],
         }
 
-        test_row: Dict[str, Union[str, float]] = {
+        test_row = {
             "split": "test",
-            "classification_model": model.hparams["classification_model"],
-            "learning_rate": model.hparams["learning_rate"],
-            "weights": model.hparams["weights"],
-            "loss": model.hparams["loss"],
+            "classification_model": hparams["classification_model"],
+            "learning_rate": hparams["learning_rate"],
+            "weights": hparams["weights"],
+            "loss": hparams["loss"],
         }
-    elif issubclass(TASK, SemanticSegmentationTask) or issubclass(TASK, BinarySemanticSegmentationTask):
-        val_row: Dict[str, Union[str, float]] = {  # type: ignore[no-redef]
+    elif issubclass(TASK, SemanticSegmentationTask):
+        val_row = {
             "split": "val",
+            "segmentation_model": hparams["segmentation_model"],
+            "encoder_name": hparams["encoder_name"],
+            "encoder_weights": hparams["encoder_weights"],
+            "learning_rate": hparams["learning_rate"],
+            "loss": hparams["loss"],
         }
 
-        test_row: Dict[str, Union[str, float]] = {  # type: ignore[no-redef]
+        test_row = {
             "split": "test",
+            "segmentation_model": hparams["segmentation_model"],
+            "encoder_name": hparams["encoder_name"],
+            "encoder_weights": hparams["encoder_weights"],
+            "learning_rate": hparams["learning_rate"],
+            "loss": hparams["loss"],
+        }
+    elif issubclass(TASK, ObjectDetectionTask):
+        val_row = {
+            "split": "val",
+            "detection_model": hparams["detection_model"],
+            "backbone": hparams["backbone"],
+            "learning_rate": hparams["learning_rate"],
+        }
+
+        test_row = {
+            "split": "test",
+            "detection_model": hparams["detection_model"],
+            "backbone": hparams["backbone"],
+            "learning_rate": hparams["learning_rate"],
         }
     else:
         raise ValueError(f"{TASK} is not supported")
 
     # Compute metrics
-    device = torch.device("cuda:%d" % (args.gpu))  # type: ignore[attr-defined]
+    device = torch.device("cuda:%d" % (args.gpu))
     model = model.to(device)
 
     if args.task == "etci2021":  # Custom metric setup for testing ETCI2021
 
-        metrics = MetricCollection(
-            [Accuracy(num_classes=2), JaccardIndex(num_classes=2, reduction="none")]
-        ).to(device)
+        metrics = MetricCollection([BinaryAccuracy(), BinaryJaccardIndex()]).to(device)
 
         val_results = run_eval_loop(model, dm.val_dataloader(), device, metrics)
         test_results = run_eval_loop(model, dm.test_dataloader(), device, metrics)
@@ -266,6 +244,8 @@ def main(args: argparse.Namespace) -> None:
             }
         )
     else:  # Test with PyTorch Lightning as usual
+        model.val_metrics = cast(MetricCollection, model.val_metrics)
+        model.test_metrics = cast(MetricCollection, model.test_metrics)
 
         val_results = run_eval_loop(
             model, dm.val_dataloader(), device, model.val_metrics, args.root_dir
@@ -301,6 +281,9 @@ def main(args: argparse.Namespace) -> None:
                     "jaccard_index": test_results["test_JaccardIndex"].item(),
                 }
             )
+        elif issubclass(TASK, ObjectDetectionTask):
+            val_row.update({"map": val_results["map"].item()})
+            test_row.update({"map": test_results["map"].item()})
 
     #assert set(val_row.keys()) == set(test_row.keys())
     fieldnames = list(test_row.keys())
@@ -330,6 +313,69 @@ def main(args: argparse.Namespace) -> None:
 
     with open(args.output_fn.replace("csv", "sh"), "w") as f:
         f.writelines(f"{cmd}\n" for cmd in cmds)
+
+
+def run_eval_loop(
+    model: pl.LightningModule,
+    dataloader: Any,
+    device: torch.device,
+    metrics: MetricCollection,
+    root_dir=None,
+) -> Any:
+    """Runs a standard test loop over a dataloader and records metrics.
+
+    Args:
+        model: the model used for inference
+        dataloader: the dataloader to get samples from
+        device: the device to put data on
+        metrics: a torchmetrics compatible metric collection to score the output
+            from the model
+
+    Returns:
+        the result of ``metrics.compute()``
+    """
+    for index, batch in enumerate(dataloader):
+        x = batch["image"].to(device)
+        if "mask" in batch:
+            y = batch["mask"].to(device)
+        elif "label" in batch:
+            y = batch["label"].to(device)
+        elif "boxes" in batch:
+            y = [
+                {
+                    "boxes": batch["boxes"][i].to(device),
+                    "labels": batch["labels"][i].to(device),
+                }
+                for i in range(len(batch["image"]))
+            ]
+        with torch.inference_mode():
+            y_pred = model(x)
+        metrics(y_pred, y)
+
+        for i in range(y_pred.shape[0]):
+            single_pred = y_pred[i]
+            #single_label = y[i]
+            single_pred = torch.sigmoid(input=single_pred).squeeze() * 255
+            single_pred = single_pred.cpu().numpy()
+            if root_dir:
+                # save to raster
+                out_dir = Path(root_dir) / batch["aoi_id"][i]
+                out_dir.mkdir(exist_ok=True)
+                out_file = out_dir / f"{Path(batch['image_path'][i]).stem}_inference.tif"
+                create_new_raster_from_base(batch["image_path"][i], out_file, single_pred)
+
+            # visualize with matplotlib
+            # fig, (axpred, axlabel) = plt.subplots(1, 2, figsize=(14, 7))
+            # axpred.imshow(single_pred.squeeze())
+            # axlabel.imshow(single_label.squeeze())
+            # plt.axis("off")
+            # #plt.show()
+            # plt.savefig(f"C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\MB13\\rebirth\\MB13_{index}_{i}.png")
+            # plt.close()
+            # print(f"C:\\Users\\rtavon\\Downloads\\ccmeo_data_06-2022\\MB13\\rebirth\\MB13_{index}_{i}.png")
+    results = metrics.compute()
+    metrics.reset()
+    return results
 
 
 if __name__ == "__main__":
