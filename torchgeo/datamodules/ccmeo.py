@@ -26,8 +26,6 @@ from ..datasets.ccmeo import DigitalGlobe, InferenceDataset
 # https://github.com/pytorch/pytorch/pull/61045
 DataLoader.__module__ = "torch.utils.data"
 
-from ..samplers.single import GridGeoSamplerPlus
-
 
 class CCMEODataModule(pl.LightningDataModule):
     """LightningDataModule implementation for the CCMEO dataset.
@@ -116,9 +114,9 @@ class CCMEODataModule(pl.LightningDataModule):
                 K.RandomHorizontalFlip(p=0.5),
                 K.RandomVerticalFlip(p=0.5),
                 K.RandomSharpness(p=0.5),
-                K.ColorJitter(
-                    p=0.5, brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1
-                ),
+                #K.ColorJitter(
+                #    p=0.5, brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1
+                #),  # doesn't work with num_bands != 3
                 data_keys=["input", "mask"],
             )
             x, y = train_augmentations(x, y)
@@ -410,7 +408,7 @@ class InferenceDataModule(LightningDataModule):
             inference data loader
         """
         units = Units.PIXELS if not self.use_projection_units else Units.CRS
-        self.sampler = GridGeoSamplerPlus(
+        self.sampler = GridGeoSampler(
             self.inference_dataset,
             size=self.patch_size,
             stride=self.stride,

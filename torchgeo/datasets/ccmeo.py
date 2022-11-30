@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 from typing import Union, Optional, Sequence, Callable, Dict, Any, cast, List, Tuple
 
-import fiona
 import pandas
 from hydra.utils import to_absolute_path
 import matplotlib.pyplot as plt
@@ -23,15 +22,12 @@ import torch
 from torchgeo.datasets import RasterDataset, BoundingBox
 from torchvision.datasets.utils import download_url
 
-from fiona.errors import FionaValueError
-from fiona.transform import transform_geom
 from matplotlib.figure import Figure
 from rasterio.crs import CRS
-from rasterio.features import rasterize
 from rasterio.transform import Affine
 from torch import Tensor
 
-from .geo import VisionDataset
+from .geo import NonGeoDataset
 from .utils import (
     check_integrity,
     download_radiant_mlhub_collection,
@@ -75,7 +71,7 @@ class SingleBandItemEO(ItemEOExtension):
         return self._assets_by_common_name
 
 
-class CCMEO(VisionDataset, abc.ABC):
+class CCMEO(NonGeoDataset, abc.ABC):
     """Abstract base class for the SpaceNet datasets.
 
     The `CCMEO`_ datasets are a set of datasets that contain mostly 4-class labels

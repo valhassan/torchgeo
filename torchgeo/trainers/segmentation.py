@@ -8,18 +8,16 @@ from typing import Any, Dict, cast
 
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
-import segmentation_models_pytorch as smp
 import torch
 from hydra.utils import instantiate
-from pytorch_lightning.core.lightning import LightningModule
-import torch.nn as nn
 from torch import Tensor
 from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
 from torch.utils.data import DataLoader
-from torchmetrics import MetricCollection, JaccardIndex
+from torchmetrics import MetricCollection
 from torchmetrics.classification import (  # type: ignore[attr-defined]
     MulticlassAccuracy,
     MulticlassJaccardIndex,
+    BinaryJaccardIndex,
 )
 
 from ..datasets.utils import unbind_samples
@@ -237,11 +235,18 @@ class SemanticSegmentationTask(pl.LightningModule):
             },
         }
 
-# FIXME: not all metrics from torchmetrics work. For JaccardIndex, manually set multilabel=True and under
-# torchmetrics.functional.classification.jaccard._jaccard_from_confmat, add confmat = confmat.squeeze() at beginning
-class BinarySemanticSegmentationTask(SemanticSegmentationTask):
-    """LightningModule for semantic segmentation of images."""
 
+class BinarySemanticSegmentationTask(pl.LightningModule):
+    """
+    LightningModule for semantic segmentation of images.
+    FIXME: not all metrics from torchmetrics work. For JaccardIndex, manually set multilabel=True and under
+    torchmetrics.functional.classification.jaccard._jaccard_from_confmat, add confmat = confmat.squeeze() at beginning
+    """
+
+    def config_task(self) -> None:
+        """Configures the task based on kwargs parameters passed to the constructor."""
+        self.model = instantiate(self.hparams["model"])
+        self.loss = instantiate(self.hparams["loss"])
 
     def __init__(self, **kwargs: Any) -> None:
         """Initialize the LightningModule with a model and loss function.
@@ -260,15 +265,24 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
             ValueError: if kwargs arguments are invalid
         """
         super().__init__()
-        self.save_hyperparameters()  # creates `self.hparams` from kwargs
 
-        self.ignore_zeros = None if kwargs["loss"]["ignore_index"] else 0
+        # Creates `self.hparams` from kwargs
+        self.save_hyperparameters()  # type: ignore[operator]
+        self.hyperparams = cast(Dict[str, Any], self.hparams)
 
+        if not isinstance(kwargs["loss"]["ignore_index"], (int, type(None))):
+           raise ValueError("ignore_index must be an int or None")
+        if (kwargs["loss"]["ignore_index"] is not None) and (kwargs["loss"] == "jaccard"):
+           warnings.warn(
+               "ignore_index has no effect on training when loss='jaccard'",
+               UserWarning,
+           )
+        self.ignore_index = kwargs["loss"]["ignore_index"]
         self.config_task()
 
         self.train_metrics = MetricCollection(
             [
-                JaccardIndex(
+                BinaryJaccardIndex(
                     num_classes=self.hparams["model"]["classes"],
                     ignore_index=self.hparams["loss"]["ignore_index"],
                     multilabel=True,
@@ -278,6 +292,17 @@ class BinarySemanticSegmentationTask(SemanticSegmentationTask):
         )
         self.val_metrics = self.train_metrics.clone(prefix="val_")
         self.test_metrics = self.train_metrics.clone(prefix="test_")
+
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        """Forward pass of the model.
+
+        Args:
+            x: tensor of data to run through the model
+
+        Returns:
+            output from the model
+        """
+        return self.model(*args, **kwargs)
 
     def training_step(  # type: ignore[override]
         self, batch: Dict[str, Any], batch_idx: int

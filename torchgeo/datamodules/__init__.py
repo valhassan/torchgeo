@@ -50,7 +50,6 @@ __all__ = (
     "So2SatDataModule",
     "Spacenet1DataModule",
     "TropicalCycloneDataModule",
-    "CycloneDataModule",
     "UCMercedDataModule",
     "USAVarsDataModule",
     "Vaihingen2DDataModule",
