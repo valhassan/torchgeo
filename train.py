@@ -118,8 +118,8 @@ def main(conf: DictConfig) -> None:
     if task_name in TASK_TO_MODULES_MAPPING:
         task_class, datamodule_class = TASK_TO_MODULES_MAPPING[task_name]
         task = task_class(**task_args)
-        print(f'Transfer learning from: {task.hparams["model_state_dict"]}')
-        if task.hparams["model_state_dict"] is not None:
+        if "model_state_dict" in task.hparams.keys() and task.hparams["model_state_dict"] is not None:
+            print(f'Transfer learning from: {task.hparams["model_state_dict"]}')
             task = task.load_from_checkpoint(checkpoint_path=task.hparams["model_state_dict"])
         datamodule = datamodule_class(**datamodule_args)
     else:
