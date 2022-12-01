@@ -330,6 +330,15 @@ class BinarySemanticSegmentationTask(pl.LightningModule):
 
         return cast(Tensor, loss)
 
+    def training_epoch_end(self, outputs: Any) -> None:
+        """Logs epoch level training metrics.
+
+        Args:
+            outputs: list of items returned by training_step
+        """
+        self.log_dict(self.train_metrics.compute())
+        self.train_metrics.reset()
+
     def validation_step(  # type: ignore[override]
         self, batch: Dict[str, Any], batch_idx: int
     ) -> None:
@@ -367,6 +376,15 @@ class BinarySemanticSegmentationTask(pl.LightningModule):
             except AttributeError:
                 pass
 
+    def validation_epoch_end(self, outputs: Any) -> None:
+        """Logs epoch level validation metrics.
+
+        Args:
+            outputs: list of items returned by validation_step
+        """
+        self.log_dict(self.val_metrics.compute())
+        self.val_metrics.reset()
+
     def test_step(  # type: ignore[override]
         self, batch: Dict[str, Any], batch_idx: int
     ) -> None:
@@ -386,6 +404,15 @@ class BinarySemanticSegmentationTask(pl.LightningModule):
         # by default, the test and validation steps only log per *epoch*
         self.log("test_loss", loss, on_step=False, on_epoch=True)
         self.test_metrics(y_hat_sigmoid, y)
+
+    def test_epoch_end(self, outputs: Any) -> None:
+        """Logs epoch level test metrics.
+
+        Args:
+            outputs: list of items returned by test_step
+        """
+        self.log_dict(self.test_metrics.compute())
+        self.test_metrics.reset()
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Initialize the optimizer and learning rate scheduler.

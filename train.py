@@ -131,7 +131,7 @@ def main(conf: DictConfig) -> None:
     # Setup trainer
     ######################################
     #tb_logger = pl_loggers.TensorBoardLogger(conf.program.log_dir, name=experiment_name)
-    mlf_logger = MLFlowLogger(experiment_name=experiment_name, tracking_uri=conf.program.log_dir)
+    mlf_logger = MLFlowLogger(experiment_name=experiment_name, save_dir=conf.program.log_dir)
 
     if isinstance(task, ObjectDetectionTask):
         monitor_metric = "val_map"
@@ -162,7 +162,7 @@ def main(conf: DictConfig) -> None:
     ######################################
     trainer.fit(model=task, datamodule=datamodule)
     test_metrics = trainer.test(model=task, datamodule=datamodule)
-    return test_metrics[0]["test_JaccardIndex"]
+    return test_metrics[0]["test_BinaryJaccardIndex"]
 
 
 if __name__ == "__main__":
