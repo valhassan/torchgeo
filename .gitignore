@@ -2,7 +2,12 @@
 /data/
 /logs/
 /output/
+/outputs/
 *.pdf
+
+# IDEA
+*.idea**
+*.vscode**
 
 # Spack
 .spack-env/
