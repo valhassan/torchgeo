@@ -43,6 +43,9 @@ class SemanticSegmentationTask(pl.LightningModule):
     def config_task(self) -> None:
         """Configures the task based on kwargs parameters passed to the constructor."""
         self.model = instantiate(self.hparams["model"])
+        checkpoint_path = self.hparams["model_state_dict"]
+        if checkpoint_path is not None:
+            self.load_model(checkpoint_path)
         self.loss = instantiate(self.hparams["loss"])
 
     def __init__(self, **kwargs: Any) -> None:
@@ -68,31 +71,29 @@ class SemanticSegmentationTask(pl.LightningModule):
         """
         super().__init__()
 
-        self.ignore_zeros = None if self.hparams["loss"]["ignore_index"] else 0
-
         # Creates `self.hparams` from kwargs
-        #self.save_hyperparameters()  # type: ignore[operator]
-        #self.hyperparams = cast(Dict[str, Any], self.hparams)
+        self.save_hyperparameters()  # type: ignore[operator]
+        self.hyperparams = cast(Dict[str, Any], self.hparams)
 
-        if not isinstance(kwargs["ignore_index"], (int, type(None))):
-            raise ValueError("ignore_index must be an int or None")
-        if (kwargs["ignore_index"] is not None) and (kwargs["loss"] == "jaccard"):
-            warnings.warn(
-                "ignore_index has no effect on training when loss='jaccard'",
-                UserWarning,
-            )
-        self.ignore_index = kwargs["ignore_index"]
+        if not isinstance(kwargs["loss"]["ignore_index"], (int, type(None))):
+           raise ValueError("ignore_index must be an int or None")
+        if (kwargs["loss"]["ignore_index"] is not None) and (kwargs["loss"] == "jaccard"):
+           warnings.warn(
+               "ignore_index has no effect on training when loss='jaccard'",
+               UserWarning,
+           )
+        self.ignore_index = kwargs["loss"]["ignore_index"]
         self.config_task()
 
         self.train_metrics = MetricCollection(
             [
                 MulticlassAccuracy(
-                    num_classes=self.hyperparams["num_classes"],
+                    num_classes=self.hparams["model"]["classes"],
                     ignore_index=self.ignore_index,
                     mdmc_average="global",
                 ),
                 MulticlassJaccardIndex(
-                    num_classes=self.hyperparams["num_classes"],
+                    num_classes=self.hparams["model"]["classes"],
                     ignore_index=self.ignore_index,
                 ),
             ],
@@ -100,7 +101,10 @@ class SemanticSegmentationTask(pl.LightningModule):
         )
         self.val_metrics = self.train_metrics.clone(prefix="val_")
         self.test_metrics = self.train_metrics.clone(prefix="test_")
-
+    def load_model(self, path):
+        checkpoint = torch.load(f=path, map_location='cpu')
+        self.model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+    
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         """Forward pass of the model.
 
@@ -112,7 +116,8 @@ class SemanticSegmentationTask(pl.LightningModule):
         """
         return self.model(*args, **kwargs)
 
-    def training_step(self, *args: Any, **kwargs: Any) -> Tensor:
+    def training_step(# type: ignore[override] 
+                      self, batch: Dict[str, Any], batch_idx: int) -> Tensor:
         """Compute and return the training loss.
 
         Args:
@@ -121,10 +126,9 @@ class SemanticSegmentationTask(pl.LightningModule):
         Returns:
             training loss
         """
-        batch = args[0]
         x = batch["image"]
         y = batch["mask"]
-        y_hat = self(x)
+        y_hat = self.forward(x)
         y_hat_hard = y_hat.argmax(dim=1)
 
         loss = self.loss(y_hat, y)
@@ -145,18 +149,17 @@ class SemanticSegmentationTask(pl.LightningModule):
         self.log_dict(self.train_metrics.compute())
         self.train_metrics.reset()
 
-    def validation_step(self, *args: Any, **kwargs: Any) -> None:
+    def validation_step(# type: ignore[override] 
+                        self, batch: Dict[str, Any], batch_idx: int) -> None:
         """Compute validation loss and log example predictions.
 
         Args:
             batch: the output of your DataLoader
             batch_idx: the index of this batch
         """
-        batch = args[0]
-        batch_idx = args[1]
         x = batch["image"]
         y = batch["mask"]
-        y_hat = self(x)
+        y_hat = self.forward(x)
         y_hat_hard = y_hat.argmax(dim=1)
 
         loss = self.loss(y_hat, y)
@@ -189,16 +192,17 @@ class SemanticSegmentationTask(pl.LightningModule):
         self.log_dict(self.val_metrics.compute())
         self.val_metrics.reset()
 
-    def test_step(self, *args: Any, **kwargs: Any) -> None:
-        """Compute test loss.
+    def test_step(  # type: ignore[override] 
+                  self, batch: Dict[str, Any], batch_idx: int) -> None:
+        """Test step identical to the validation step.
 
         Args:
-            batch: the output of your DataLoader
+            batch: Current batch
+            batch_idx: Index of current batch
         """
-        batch = args[0]
         x = batch["image"]
-        y = batch["mask"]
-        y_hat = self(x)
+        y = batch["mask"]        
+        y_hat = self.forward(x)
         y_hat_hard = y_hat.argmax(dim=1)
 
         loss = self.loss(y_hat, y)
@@ -432,5 +436,6 @@ class BinarySemanticSegmentationTask(pl.LightningModule):
                     epochs=self.trainer.max_epochs,
                 ),
                 "monitor": "val_loss",
+                "interval": "step",
             },
         }

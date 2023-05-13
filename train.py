@@ -50,6 +50,7 @@ TASK_TO_MODULES_MAPPING: Dict[
     "bigearthnet": (MultiLabelClassificationTask, BigEarthNetDataModule),
     "byol": (BYOLTask, ChesapeakeCVPRDataModule),
     "ccmeo": (BinarySemanticSegmentationTask, CCMEODataModule),
+    "ccmeo_multi": (SemanticSegmentationTask, CCMEODataModule),
     "chesapeake_cvpr": (SemanticSegmentationTask, ChesapeakeCVPRDataModule),
     "cowc_counting": (RegressionTask, COWCCountingDataModule),
     "cyclone": (RegressionTask, TropicalCycloneDataModule),
@@ -79,7 +80,8 @@ def main(conf: DictConfig) -> None:
     # Set random seed for reproducibility
     # https://pytorch-lightning.readthedocs.io/en/latest/api/pytorch_lightning.utilities.seed.html#pytorch_lightning.utilities.seed.seed_everything
     pl.seed_everything(conf.program.seed)
-
+    
+    # checkpoint_path = conf.experiment.model_state_dict
     experiment_name = conf.experiment.name
     task_name = conf.experiment.task
     if os.path.isfile(conf.program.output_dir):
@@ -118,9 +120,9 @@ def main(conf: DictConfig) -> None:
     if task_name in TASK_TO_MODULES_MAPPING:
         task_class, datamodule_class = TASK_TO_MODULES_MAPPING[task_name]
         task = task_class(**task_args)
-        if "model_state_dict" in task.hparams.keys() and task.hparams["model_state_dict"] is not None:
-            print(f'Transfer learning from: {task.hparams["model_state_dict"]}')
-            task = task.load_from_checkpoint(checkpoint_path=task.hparams["model_state_dict"])
+        # if checkpoint_path is not None:
+        #     print(f'Transfer learning from: {checkpoint_path}')
+        #     task = task.load_model(path=checkpoint_path)
         datamodule = datamodule_class(**datamodule_args)
     else:
         raise ValueError(
@@ -162,7 +164,7 @@ def main(conf: DictConfig) -> None:
     ######################################
     trainer.fit(model=task, datamodule=datamodule)
     test_metrics = trainer.test(model=task, datamodule=datamodule)
-    return test_metrics[0]["test_BinaryJaccardIndex"]
+    return test_metrics
 
 
 if __name__ == "__main__":
