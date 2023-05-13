@@ -125,7 +125,7 @@ class CCMEO(NonGeoDataset, abc.ABC):
         Raises:
             RuntimeError: if ``download=False`` but dataset is missing
         """
-        self.root = root
+        self.root = Path(root)
         self.image = image  # For testing
         self.splits = splits
 
@@ -170,7 +170,7 @@ class CCMEO(NonGeoDataset, abc.ABC):
             rows = pandas.read_csv(split, sep=';', header=None)
             for row in rows.values:
                 imgpath, lbl_path = row[:2]
-                imgpath, lbl_path = Path(imgpath), Path(lbl_path)
+                imgpath, lbl_path = self.root / imgpath, self.root / lbl_path
                 if not imgpath.is_file():
                     raise FileNotFoundError(imgpath)
                 if not lbl_path.is_file():
