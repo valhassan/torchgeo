@@ -33,8 +33,8 @@ class CCMEODataModule(pl.LightningDataModule):
     Uses the train/val/test splits from the dataset.
     """
 
-    band_means = torch.tensor([25.29, 33.29, 33.70]) / 255  # , 53.48])  # NIR
-    band_stds = torch.tensor([16.37, 17.67, 16.09]) / 255  # , 32.77])  # NIR
+    # band_means = torch.tensor([25.29, 33.29, 33.70]) / 255  # , 53.48])  # NIR
+    # band_stds = torch.tensor([16.37, 17.67, 16.09]) / 255  # , 32.77])  # NIR
 
     def __init__(
         self,
@@ -42,10 +42,11 @@ class CCMEODataModule(pl.LightningDataModule):
         train_splits: List[str],
         val_splits: List[str],
         test_splits: List[str],
+        mean: List[int],
+        std: List[int],
         batch_size: int = 64,
         num_workers: int = 0,
         patch_size: int = 256,
-        normalize: bool = False,
         enhance_clahe: bool = False,
         enhance_clip_limit: int = 5,
 
@@ -69,6 +70,8 @@ class CCMEODataModule(pl.LightningDataModule):
         self.train_splits = train_splits
         self.val_splits = val_splits
         self.test_splits = test_splits
+        self.mean = mean
+        self.std = std
         self.batch_size = batch_size
         self.num_workers = num_workers
 
@@ -77,15 +80,15 @@ class CCMEODataModule(pl.LightningDataModule):
         # EPSG:3857 in order to guarantee a large enough patch in the local CRS.
         self.original_patch_size = int(patch_size * 2.0)
 
-        self.normalize = normalize
-        if self.normalize:
-            print("NORMALIZE")
         self.enhance = enhance_clahe
         if self.enhance:
             print("ENHANCE CLAHE")
         self.enhance_clip_limit = enhance_clip_limit
 
-        self.norm = Normalize(self.band_means, self.band_stds)
+        self.norm = None
+        if self.mean and self.std:
+            print("NORMALIZE")
+            self.norm = Normalize(self.mean, self.std)
 
     def on_after_batch_transfer(
         self, batch: Dict[str, Any], batch_idx: int
@@ -139,11 +142,10 @@ class CCMEODataModule(pl.LightningDataModule):
         sample["image"] = sample["image"] / 255.0
 
         sample["image"] = sample["image"].float()
-        if self.normalize:
+        # sample["image"] = normalize_min_max(sample["image"].unsqueeze(axis=0)).squeeze(axis=0)
+        if self.norm:
             sample["image"] = self.norm(sample["image"])
         if self.enhance:
-            if self.normalize:
-                sample["image"] = normalize_min_max(sample["image"].unsqueeze(axis=0)).squeeze(axis=0)
             sample["image"] = equalize_clahe(sample["image"], clip_limit=float(self.enhance_clip_limit), grid_size=(8, 8))
         sample["mask"] = sample["mask"].long()
 
