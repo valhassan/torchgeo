@@ -10,6 +10,7 @@ from typing import Any, Dict, Tuple, Type, cast
 
 import hydra
 import pytorch_lightning as pl
+from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
@@ -42,7 +43,7 @@ from torchgeo.trainers import (
     RegressionTask,
     SemanticSegmentationTask,
 )
-from torchgeo.trainers.segmentation import BinarySemanticSegmentationTask
+from torchgeo.trainers.segmentation import BinarySemanticSegmentationTask, MultiClassTransformer
 
 TASK_TO_MODULES_MAPPING: Dict[
     str, Tuple[Type[pl.LightningModule], Type[pl.LightningDataModule]]
@@ -51,6 +52,7 @@ TASK_TO_MODULES_MAPPING: Dict[
     "byol": (BYOLTask, ChesapeakeCVPRDataModule),
     "ccmeo": (BinarySemanticSegmentationTask, CCMEODataModule),
     "ccmeo_multi": (SemanticSegmentationTask, CCMEODataModule),
+    "ccmeo_multi_transformer": (MultiClassTransformer, CCMEODataModule),
     "chesapeake_cvpr": (SemanticSegmentationTask, ChesapeakeCVPRDataModule),
     "cowc_counting": (RegressionTask, COWCCountingDataModule),
     "cyclone": (RegressionTask, TropicalCycloneDataModule),
@@ -143,7 +145,8 @@ def main(conf: DictConfig) -> None:
         mode = "min"
 
     checkpoint_callback = ModelCheckpoint(
-        monitor=monitor_metric, dirpath=experiment_dir, save_top_k=1, save_last=True
+        monitor=monitor_metric, dirpath=experiment_dir,  filename='{epoch}_{val_loss:.2f}',
+        save_top_k=1, save_last=False
     )
     early_stopping_callback = EarlyStopping(
         monitor=monitor_metric, min_delta=0.00, patience=18, mode=mode
@@ -164,6 +167,10 @@ def main(conf: DictConfig) -> None:
     ######################################
     trainer.fit(model=task, datamodule=datamodule)
     test_metrics = trainer.test(model=task, datamodule=datamodule)
+    if trainer.global_rank == 0:
+        best_model_path = Path(checkpoint_callback.best_model_path)
+        gdl_model_path = best_model_path.with_suffix(".pth.tar") 
+        trainer.model.save_model(best_model_path, gdl_model_path)
     return test_metrics
 
 
