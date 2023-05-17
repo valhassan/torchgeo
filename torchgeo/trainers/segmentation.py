@@ -227,7 +227,7 @@ class MultiClassTransformer(pl.LightningModule):
         loss = self.loss(y_hat, y)
 
         # by default, the test and validation steps only log per *epoch*
-        self.log("test_loss", loss, on_step=False, on_epoch=True)
+        self.log("test_loss", loss, on_step=False, on_epoch=True, sync_dist=True)
         self.test_metrics(y_hat_hard, y)
 
     def test_epoch_end(self, outputs: Any) -> None:
