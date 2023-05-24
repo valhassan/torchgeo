@@ -146,7 +146,7 @@ def main(conf: DictConfig) -> None:
 
     checkpoint_callback = ModelCheckpoint(
         monitor=monitor_metric, dirpath=experiment_dir,  filename='{epoch}_{val_loss:.2f}',
-        save_top_k=1, save_last=False
+        save_top_k=1, save_last=False, save_weights_only=True
     )
     early_stopping_callback = EarlyStopping(
         monitor=monitor_metric, min_delta=0.00, patience=18, mode=mode
