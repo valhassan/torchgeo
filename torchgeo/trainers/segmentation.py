@@ -332,12 +332,17 @@ class SemanticSegmentationTask(pl.LightningModule):
     
     def load_model(self, path):
         checkpoint = torch.load(f=path, map_location='cpu')
-        if "model_state_dict" in checkpoint.keys():
-            state_key = "model_state_dict"
-        else:
-            state_key = "state_dict"
+        if "state_dict" in checkpoint.keys():
+            checkpoint['model_state_dict'] = checkpoint['state_dict']
+            # removes ".model" prefix for each key in weights dict
+            if list(checkpoint['model_state_dict'].keys())[0].startswith('model'):
+                new_state_dict = {}
+                new_state_dict['model_state_dict'] = checkpoint['model_state_dict'].copy()
+                new_state_dict['model_state_dict'] = {k.split("model.")[-1]: v for k, v in
+                                                    checkpoint['model_state_dict'].items()}
+                checkpoint['model_state_dict'] = new_state_dict['model_state_dict']
             
-        self.model.load_state_dict(checkpoint[state_key], strict=True)
+        self.model.load_state_dict(checkpoint['model_state_dict'], strict=True)
     
     def save_model(self, model_path, out_path):
         print(f"Updating PL to GDL checkpoint format")
