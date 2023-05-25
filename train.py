@@ -157,7 +157,6 @@ def main(conf: DictConfig) -> None:
     trainer_args["callbacks"] = [checkpoint_callback, early_stopping_callback]
     trainer_args["logger"] = mlf_logger
     trainer_args["default_root_dir"] = experiment_dir
-    trainer_args["resume_from_checkpoint"] = conf.program.pl_checkpoint
     trainer = pl.Trainer(**trainer_args)
 
     if trainer_args.get("auto_lr_find") or trainer_args.get("auto_scale_batch_size"):
